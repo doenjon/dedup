@@ -1,6 +1,7 @@
 
 # python dedup.py --read test/Pt/pt.all.fastq --assembly test/Pt/very_duplicated/Assembly.fasta
-# python dedup.py --read test/Pt_small/pt.aln.fastq --assembly test/Pt/duplicated_asm.fasta
+# python dedup.py --read work/test/Pt_small/pt.aln.fastq --assembly work/test/Pt_small/duplicated_asm.fasta
+# python dedup.py --read work/test/Pt_small2/ngs.OU59mapped.fastq --assembly work/test/Pt_small2/OU59_asm.fasta
 
 import sys 
 import mmap
@@ -10,11 +11,15 @@ import logging
 import argparse
 import datetime
 import subprocess
+import pandas as pd
 from Bio import SeqIO
 import plotly.express as px
+import difflib
+
+
+from datasketch import MinHashLSHEnsemble, MinHash
 
 import numpy as np
-
 
 # align
 # bwa aln -t 8 -N -n 0 -o 0 -k 0 -l 21 test/Pt/pt.fasta .tmp/homozygous_duplicated.fasta > homo.sam
@@ -23,10 +28,6 @@ import numpy as np
 # samtools view -bH homo.2.sam > homo.2.bam
 # sort
 
-
-
-
-
 logging.basicConfig(level=logging.INFO)
 
 class Contig():
@@ -34,6 +35,8 @@ class Contig():
     def __init__(self, name, sequence):
         self.name = name
         self.sequence = sequence
+
+        self.kontig = [] # a kmer representation of a contig
 
         self.homo_dup_depth = []
         self.homo_non_dup_depth = []
@@ -46,7 +49,8 @@ class Contig():
         for pos in range(len(self.homo_dup_depth)):
             # no homozygous kmers in this position
             if self.homo_dup_depth[pos] == 0 and self.homo_non_dup_depth[pos] == 0:
-                self.dnd_ratio.append(0.5) # TODO: find a better way to handle no data
+                self.dnd_ratio.append(0.5)  # TODO: find a better way to handle no data
+                                            # for now, set it to average of dup and non_dup
             else:
                 # ie. percent of homozygous kmers that are duplicated
                 self.dnd_ratio.append(self.homo_dup_depth[pos] / (self.homo_dup_depth[pos] + self.homo_non_dup_depth[pos]))    
@@ -57,8 +61,8 @@ class Contig():
             return np.convolve(data, np.ones(window_size) / window_size, mode='valid')
        
         moving_ave = moving_average(self.dnd_ratio, 1000)
-        print(self.dnd_ratio)
-        print(moving_ave)
+        # print(self.dnd_ratio)
+        # print(moving_ave)
         pos = [i for i in range(0, len(moving_ave))]
 
         if not os.path.exists("results"):
@@ -75,6 +79,104 @@ class Contig():
         # fig.write_image(f'results/{self.name}_dnd_ratio.png')
         # fig.write_html(f'results/{self.name}_dnd_ratio.html')
 
+
+    # TODO LOLOL - fix
+    def read_kmers_from_fasta(self, kmer_fasta):
+        '''
+        Read kmers from a fasta file of kmers
+
+        input: 
+            kmer_db: (str) path to kmer fasta file 
+            
+        output: 
+            kmers: list of kmers
+        '''
+        print(f"Reading file: {kmer_fasta}")
+        kmers = []
+
+        # read the file fast to make a progress meter...
+        def blocks(files, size=65536):
+            while True:
+                b = files.read(size)
+                if not b: break
+                yield b
+
+        ln_count=0
+        with open(kmer_fasta, "r",encoding="utf-8",errors='ignore') as f:
+            ln_count=sum(bl.count("\n") for bl in blocks(f))
+
+        start_time = datetime.datetime.now()
+        ln_count2=0
+        with open(kmer_fasta, "r+b") as file:
+
+            m = mmap.mmap(file.fileno(), 0, prot=mmap.PROT_READ) #File is open read-only
+
+            for line in iter(m.readline, b""):	
+                line = line.decode("utf-8").rstrip()
+                ln_count2 += 1
+                if line[0] != ">":
+                    kmers.append(line)
+
+                if ln_count2 % 500000 == 0:
+                    curr_time = datetime.datetime.now()
+                    elapsed = curr_time - start_time
+                    pred = elapsed / (ln_count2/(ln_count))
+                    remaining_time = str(pred - elapsed)
+                    print(f"{100*ln_count2/(ln_count):.2f}% complete -- Predicted remaining: {remaining_time}", end="\r")
+        # print("\t\t\t\t\t\t\t\t\t", end="\r")
+        return kmers
+
+    def calculate_kontig(self, duplicated_kmers):
+        '''
+        Generate a kontig from a contig and a list of duplicated kmers
+
+        painfully slow...
+
+        '''
+        print(f"Generating kontig for {self.name}")
+
+        # kmer_size = len(duplicated_kmers[0]) # TODO sloppy
+        # print(f"contig: {self.name} -- len: {len(self.sequence)}", end=" ")
+        # for i in range(0, len(self.sequence) - kmer_size):
+
+        #     kmer = self.sequence[i:i+kmer_size] # potential kmer
+        #     rev_kmer = kmer[::-1].translate(str.maketrans('ATCGatcg', 'TAGCtagc'))
+        #     if kmer in duplicated_kmers:
+        #         self.kontig.append(kmer)
+        #     elif rev_kmer in duplicated_kmers:
+        #         self.kontig.append(rev_kmer)
+
+        # print(f"Found {len(self.kontig)} duplicate kmers. \t Rate: {len(self.kontig) / len(self.contig)}")
+
+
+        # also stupid slow
+        # for kmer in duplicated_kmers:
+        #     if kmer in self.sequence:
+        #         self.kontig.append(kmer)
+
+        # Try jellyfish
+        # TODO: fix file path
+        fasta = f".tmp/{self.name}.fasta"
+        with open(fasta, "w") as file:
+            file.write(f">{self.name}\n{self.sequence}")
+        db_path = f".tmp/{self.name}.jf"
+        #TODO: fix kmersize
+        cmd = f"jellyfish count -m 21 -s 100M -t 8 -C {fasta} --output {db_path}"  # TODO: @enhancement add memory opt and bloom filter #TODO: change threading
+        logging.debug(cmd)
+        p = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT) 
+        retval = p.wait()
+
+        out_file = f".tmp/{self.name}.single.jf"
+        cmd = f"jellyfish dump --lower-count 1 --upper-count 1 --output {out_file} {db_path}"  
+        logging.debug(cmd)
+        p = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT) 
+        retval = p.wait()
+
+        kmers = self.read_kmers_from_fasta(out_file)
+
+        self.kontig = list(set(kmers) & set(duplicated_kmers))
+
+        # print(self.kontig)
 
 
 
@@ -98,8 +200,72 @@ class Deduplicator():
         if not os.path.exists(self.tmp_dir):
             os.makedirs(self.tmp_dir)
 
-
     def dedup(self):
+
+        self.find_dupliacate_regions()
+        alignments = self.self_alignment()
+
+        def minhash(kontig, num_perm=128):
+            m = MinHash(num_perm=num_perm)
+            for k in kontig:
+                m.update(str(k).encode('utf8'))
+            return m
+
+        kontigs = [c.kontig for c in self.contigs]
+        print("Calculating hash")
+        lshensemble = MinHashLSHEnsemble(threshold=0.2, num_perm=128, num_part=32)
+        lshensemble.index([(i, minhash(k), len(k)) for i, k in enumerate(kontigs) if k != []])
+        
+        handled_pairs = {}
+        for i, contig in enumerate(self.contigs):
+            k = contig.kontig
+
+            contig_i = []
+
+            if k == []:
+                print(f"Contig {i} unmodified")
+                contig_i.append(contig)
+
+            else: 
+                pairs = []
+                for key in lshensemble.query(minhash(k), len(k)):
+                    if key != i:	# obvi don't allow self matching
+                        dist = difflib.SequenceMatcher(None,kontigs[i],kontigs[key])
+                        pair_1 = min(key, i)
+                        pair_2 = max(key, i)
+
+                        if pair_1 in handled_pairs.keys():
+                            if pair_2 in handled_pairs[pair_1]:
+                                pass
+                            else:
+                                handled_pairs[pair_1].append(pair_2)
+                                pairs.append(key)
+                        else:
+                            handled_pairs[pair_1] = [pair_2]
+                            pairs.append(key)
+
+                if len(pairs) == 0:
+                    print(f"Contig {i} unmodified")
+                    contig_i.append(contig)
+
+                else: # found a good mapping - deduplicate
+                    print(f"Contig {i} deduplicated")
+                    print(pairs)
+
+        # # TODO: only search relevant contig pairs
+        # for contig_1 in range(len(self.contigs)):
+        #     for contig_2 in range(contig_1 + 1, len(self.contigs)):
+        
+        #         logging.info(f"Checking contig_1: {self.contigs[contig_1].name} and contig_2: {self.contigs[contig_2].name}")
+                
+        #         # collect alignments between these two contigs
+        #         alignment_pairs_df = alignment_df.loc[(alignment_df["qname"] == self.contigs[contig_1].name) & (alignment_df["tname"] == self.contigs[contig_2].name)]
+        #         # alignments are duplicated, only need to check one way
+
+        #         alignment_pairs_df = alignment_pairs_df.sort_values(by=["strand", "qstart", "qend"])
+        #         print(alignment_pairs_df)
+
+    def find_dupliacate_regions(self):
 
         # Count kmers
         read_kmer_db = self.make_kmer_db(self.reads, "reads")
@@ -107,18 +273,18 @@ class Deduplicator():
 
         # Filter relevant kmers
         non_duplicated_kmers = self.filter_kmer_db(assembly_kmer_db, 1, 1)
-        duplicated_kmers = self.filter_kmer_db(assembly_kmer_db, 2, 2)                  #TODO: Repeat kmers?
-        repeat_kmers = self.filter_kmer_db(assembly_kmer_db, 5, 10000)                  #TODO: Repeat kmers?
+        duplicated_kmers = self.filter_kmer_db(assembly_kmer_db, 2, 2)                  
+        repeat_kmers = self.filter_kmer_db(assembly_kmer_db, 5, 10000)                 
         homozygous_kmers = self.filter_kmer_db(read_kmer_db, self.homozygous_lower_bound, self.homozygous_upper_bound)
         heterozygous_kmers = self.filter_kmer_db(read_kmer_db, 15, 30)
 
-        print(f"calculating common kmers")
+        logging.info(f"calculating common kmers")
         homozygous_duplicated_kmers = list(set(homozygous_kmers) & set(duplicated_kmers))
         homozygous_non_duplicated_kmers = list(set(homozygous_kmers) & set(non_duplicated_kmers))
 
-        print(f"homo_duplicated: {len(homozygous_duplicated_kmers)}")
-        print(f"homo_non_duplicated: {len(homozygous_non_duplicated_kmers)}")
-        print(f"heterozygou: {len(heterozygous_kmers)}")
+        logging.info(f"homo_duplicated: {len(homozygous_duplicated_kmers)}")
+        logging.info(f"homo_non_duplicated: {len(homozygous_non_duplicated_kmers)}")
+        logging.info(f"heterozygou: {len(heterozygous_kmers)}")
 
         homo_dup_fasta = self.write_kmers(homozygous_duplicated_kmers, "homozygous_duplicated.fasta")
         homo_non_dup_fasta = self.write_kmers(homozygous_non_duplicated_kmers, "homozygous_non_duplicated.fasta")
@@ -142,11 +308,50 @@ class Deduplicator():
             print(contig)
             # print(contig.homo_dup_depth)
             # contig
-            print(len(contig.homo_dup_depth))
-            print([d for d in contig.homo_dup_depth if d > 0])
-            print(len([d for d in contig.homo_dup_depth if d > 0]))
+            # print(len(contig.homo_dup_depth))
+            # print([d for d in contig.homo_dup_depth if d > 0])
+            # print(len([d for d in contig.homo_dup_depth if d > 0]))
             contig.calculate_dnd_ratio()
             contig.plot_dnd_ratio()
+            contig.calculate_kontig(homozygous_duplicated_kmers)
+
+
+    def self_alignment(self):
+
+        alignment_file = os.path.join(self.tmp_dir, "self_alignment.paf")
+
+        cmd = f"minimap2 -DP -k19 -w19 -m200 {self.assembly} {self.assembly} > {alignment_file}"
+        # cmd = f"minimap2 -x asm20 {self.assembly} {self.assembly} > {alignment_file}"
+        p = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        retval = p.wait()
+
+
+        # # Process the alignment file
+        # alignment_list = []
+        # with open(alignment_file, "r") as file:
+        #     for line in file:
+        #         line = line.strip().split()
+        #         aln = {}
+        #         aln["match_len"] = int(line[9])
+        #         aln["target_start"] = int(line[7])
+        #         aln["target_end"] = int(line[8])
+        #         aln["map_quality"] = int(line[11])
+        #         alignment_list.append(aln)
+        # alignment_df = pd.DataFrame(alignment_list)
+
+        # print(alignment_df)
+
+        alignment_df = pd.read_csv(alignment_file, sep='\t')
+        alignment_df = alignment_df.iloc[:, :12] # only first 12 columns are relevant
+        alignment_df.columns = ["qname", "qlen", "qstart", "qend", "strand", "tname", "tlen", "tstart", "tend", "nmatch", "alen", "mapq"]
+        alignment_df["qname"] = alignment_df["qname"].astype(str)
+        alignment_df["tname"] = alignment_df["tname"].astype(str)
+
+        print(alignment_df)
+
+        return alignment_df
+                
+
 
     def make_kmer_db(self, fasta, db_name, kmer_size=21):
         '''
@@ -161,7 +366,7 @@ class Deduplicator():
         '''
         db_path = os.path.join(self.tmp_dir, f"{db_name}.jf")
         cmd = f"jellyfish count -m {kmer_size} -s 100M -t 8 -C {fasta} --output {db_path}"  # TODO: @enhancement add memory opt and bloom filter #TODO: change threading
-        print(cmd)
+        logging.debug(cmd)
         p = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT) 
         retval = p.wait()
 
@@ -184,12 +389,12 @@ class Deduplicator():
         '''
         out_file = os.path.join(self.tmp_dir, f"jf_dump_{lower_bound}_{upper_bound}")
         cmd = f"jellyfish dump --lower-count {lower_bound} --upper-count {upper_bound} --output {out_file} {kmer_db}"  
-        print(cmd)
+        logging.debug(cmd)
         p = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT) 
         retval = p.wait()
 
         
-        print(f"filter_kmer_db ret: {retval}")
+        logging.info(f"filter_kmer_db ret: {retval}")
 
         kmers = self.read_kmers_from_fasta(out_file)
 
@@ -308,7 +513,7 @@ class Deduplicator():
         # print(fasta_sequences)
 
         for fasta in SeqIO.parse(open(self.assembly), 'fasta'):
-            contig = Contig(fasta.id, fasta.seq)
+            contig = Contig(fasta.id, str(fasta.seq))
             contigs.append(contig)
         
         return contigs
@@ -329,7 +534,7 @@ class Deduplicator():
         contig_depths = {}
         outfile = f"{bam}.depth"
         cmd = f"samtools depth -a {bam} > {outfile}" 
-        print(cmd)
+        logging.debug(cmd)
         p = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT) 
         retval = p.wait()
         
@@ -340,7 +545,7 @@ class Deduplicator():
                     contig_depths[chrom] = []
                 contig_depths[chrom].append(int(depth))
         
-        print(contig_depths)
+        # print(contig_depths)
         return contig_depths
 
 def parse_args():
@@ -385,4 +590,5 @@ if __name__ == "__main__":
 
     dedup = Deduplicator(args.assembly, args.reads, args)
 
+    # dedup.dedup()
     dedup.dedup()
