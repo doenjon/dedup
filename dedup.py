@@ -228,7 +228,24 @@ class Deduplicator():
 
         return db_path
 
+    def self_alignment(self):
 
+        alignment_file = os.path.join(self.tmp_dir, "self_alignment.paf")
+
+        cmd = f"minimap2 -DP -k19 -w19 -m200 {self.assembly} {self.assembly} > {alignment_file}"
+        # cmd = f"minimap2 -x asm20 {self.assembly} {self.assembly} > {alignment_file}"
+        p = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        retval = p.wait()
+
+        alignment_df = pd.read_csv(alignment_file, sep='\t')
+        alignment_df = alignment_df.iloc[:, :12] # only first 12 columns are relevant
+        alignment_df.columns = ["qname", "qlen", "qstart", "qend", "strand", "tname", "tlen", "tstart", "tend", "nmatch", "alen", "mapq"]
+        alignment_df["qname"] = alignment_df["qname"].astype(str)
+        alignment_df["tname"] = alignment_df["tname"].astype(str)
+
+        print(alignment_df)
+
+        return alignment_df
     def filter_kmer_db(self, kmer_db, lower_bound, upper_bound):
         '''
         Run jellyfish dump on kmer database
