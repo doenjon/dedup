@@ -14,10 +14,13 @@ import subprocess
 from Bio import SeqIO
 import plotly.express as px
 from subprocess import run
-
-
+import pandas as pd
+from statistics import mean
 import numpy as np
 
+
+pd.set_option('display.max_rows', 100)
+pd.set_option('display.max_columns', 20)
 
 # align
 # bwa aln -t 8 -N -n 0 -o 0 -k 0 -l 21 test/Pt/pt.fasta .tmp/homozygous_duplicated.fasta > homo.sam
@@ -41,6 +44,8 @@ class Contig():
     
         self.homo_dup_kmers = []
         self.dnd_ratio = []
+
+        self.duplicated = []
 
     def calculate_dnd_ratio(self):
 
@@ -99,8 +104,10 @@ class Contig():
     def __str__(self):
         return f"contig: {self.name}"
     
-class Deduplicator():
+    def __repr__(self):
+        return f"contig: {self.name}"
 
+class Deduplicator():
 
     def __init__(self, assembly, reads, params):
     
@@ -127,11 +134,133 @@ class Deduplicator():
 
         candidate_pairs = self.find_pairs()
 
-    #     for contig1, contig2 in candidate_pairs:
-    #         self.dedup_pair(contig1, contig2, homo_dedup_bam)
+        self_alignment = self.self_alignment()
+
+        print(f"candidat_pairs: {candidate_pairs}")
+
+        for contig1, contig2 in candidate_pairs:
+            self.dedup_pair(contig1, contig2, self_alignment)
+
+        for contig in self.contigs:
+            print(f"Deduplication interval: {contig.name}: {contig.duplicated}")
 
 
-    # def dedup_pair(contig1, contig2, )
+    def dedup_pair(self, contig1, contig2, self_alignment):
+        """
+        Analyse the alignment and duplication between two contigs, 
+        if they can be deduplicated, mark appropriate regions for deduplication
+
+        contig1 is query
+        contig2 is target
+        """
+        # print(self_alignment.head(50))
+
+        alignment_df = self_alignment[(self_alignment["qname"] == contig1.name) & (self_alignment["tname"] == contig2.name)]
+        if not alignment_df.empty:
+            # print(alignment_df)
+            alignment_df.to_csv("alignment.paf", sep="\t", header=False, index=False)
+
+        print(alignment_df.columns)
+        # Get average dnd ratio over the interval of the alignment for both the target and query
+        alignment_df['q_dnd'] = alignment_df.apply(lambda row: mean(contig1.dnd_ratio[row['qstart']:row['qend']]), axis=1)
+        alignment_df['t_dnd'] = alignment_df.apply(lambda row: mean(contig2.dnd_ratio[row['tstart']:row['tend']]), axis=1)
+        
+        # both query and target must be duplicated over alignemtn to consider aligmnet
+        dedup_threshold = 0.6
+        alignment_df = alignment_df[(alignment_df["q_dnd"] >= dedup_threshold) & (alignment_df["t_dnd"] >= dedup_threshold)]
+        print(alignment_df)
+
+        alignment_df.sort_values(by=['qstart', 'qend'], inplace=True)
+        
+        # Remove alignments that are completely contained in other alignments
+        # Create an empty list to store the indices of rows to be kept
+        indices_to_keep = []
+
+        # Iterate through each row and check if the interval is not completely contained in any previous row
+        # TODO handle both query and target overlapping, even though really they should be the same...
+        for i, row in alignment_df.iterrows():
+            if not any(
+                (
+                    (row['qstart'] >= alignment_df.loc[j, 'qstart']) and (row['qend'] <= alignment_df.loc[j, 'qend'])
+                ) or (
+                    (row['qstart'] <= alignment_df.loc[j, 'qend']) and (row['qend'] >= alignment_df.loc[j, 'qstart'])
+                )
+                for j in indices_to_keep
+            ):
+                indices_to_keep.append(i)
+
+        print(f"indicies to keep: {indices_to_keep}")
+        print(alignment_df)
+        # Create a new DataFrame with the selected rows
+        alignment_df = alignment_df.loc[indices_to_keep]
+
+        alignment_df.reset_index(drop=True, inplace=True)   
+        print(alignment_df)
+        
+        # TODO: probably add check that alignments have overlapping homozyous duplicated kmers...
+
+        contig_1_duplication = list(zip(alignment_df['qstart'], alignment_df['qend']))
+        contig_2_duplication = list(zip(alignment_df['tstart'], alignment_df['tend']))
+
+        contig1_percent_duplicated = sum([abs(i[0] - i[1]) for i in contig_1_duplication]) / len(contig1.sequence)
+        contig2_percent_duplicated = sum([abs(i[0] - i[1]) for i in contig_2_duplication]) / len(contig2.sequence)
+
+        print(contig1_percent_duplicated)
+        print(contig2_percent_duplicated)
+
+
+        full_duplication_threshold = 0.9
+
+
+        # TODO: this logic assumes all contig aligments are chained together, which is not currently the case
+        # TODO: make this more dry
+        if contig1_percent_duplicated > contig2_percent_duplicated:
+            print(f"do deduplication on contig 1: {contig1}")
+            if contig1_percent_duplicated > full_duplication_threshold:
+                print(f"do full deduplication on contig 1: {contig1}")
+                contig1.duplicated = [(0, len(contig1.sequence))]
+            else:
+                print(f"do partial deduplication on contig 1: {contig1}")
+                min_idx = min([min(i[0], i[1]) for i in contig_1_duplication])
+                max_idx = max([max(i[0], i[1]) for i in contig_1_duplication])
+
+                end_buffer = 20000
+                print(f"min_idx: {min_idx}\nmax_idx: {max_idx}")
+
+                if min_idx < end_buffer:
+                    print(f"do deduplication on start of ccontig 1: {contig1}")
+                    contig1.duplicated.append((0, max_idx))
+                elif max_idx > len(contig1.sequence) - end_buffer:
+                    print(f"do deduplication on end of contig 1: {contig1}")
+                    contig1.duplicated.append((min_idx, len(contig1.sequence)))
+
+                contig1.deduplicated = contig_1_duplication
+        else:
+            print(f"do deduplication on contig 2: {contig2}")
+            if contig2_percent_duplicated > full_duplication_threshold:
+                print(f"do full deduplication on contig 2: {contig2}")
+            else:
+                print(f"do partial deduplication on contig 2: {contig2}")  
+                min_idx = min([min(i[0], i[1]) for i in contig_2_duplication])
+                max_idx = max([max(i[0], i[1]) for i in contig_2_duplication])
+
+                print(f"min_idx: {min_idx}\nmax_idx: {max_idx}")
+                end_buffer = 20000
+                if min_idx < end_buffer:
+                    print(f"do deduplication on start of contig 2: {contig2}")
+                    contig2.duplicated.append((0, max_idx))
+                elif max_idx > len(contig1.sequence) - end_buffer:
+                    print(f"do deduplication on end of contig 2: {contig2}")
+                    contig2.duplicated.append((min_idx, len(contig2.sequence)))
+
+         # try alignment forward
+        # alignment_df_pos = alignment_df[(alignment_df["strand"] == "+")]
+        # print(alignment_df_pos)
+
+
+        # # try alignment backwards
+        # alignment_df_neg = self_alignment[(self_alignment["strand"] == "+")]
+
 
     def find_pairs(self, containment_threshold=0.2):
         """
@@ -146,15 +275,15 @@ class Deduplicator():
 
                     common_kmers = len(list(set(contig1.homo_dup_kmers) & set(contig2.homo_dup_kmers))) 
                     c1_containment = common_kmers / len(contig1.homo_dup_kmers)
-                    logging.info(f"{contig1} {100*containment:.2f}% containment in {contig2}")
+                    logging.info(f"{contig1} {100*c1_containment:.2f}% containment in {contig2}")
 
                     c2_containment = common_kmers / len(contig2.homo_dup_kmers)
-                    logging.info(f"{contig2} {100*containment:.2f}% containment in {contig1}")
+                    logging.info(f"{contig2} {100*c2_containment:.2f}% containment in {contig1}")
 
                     if c1_containment > containment_threshold and c1_containment > c2_containment:
                         candidate_dedup_pairs.append((contig1, contig2))
 
-                    elif c1_containment > containment_threshold and c1_containment > c2_containment:
+                    elif c2_containment > containment_threshold and c2_containment > c1_containment:
                         candidate_dedup_pairs.append((contig2, contig1))
 
         return candidate_dedup_pairs
@@ -237,15 +366,14 @@ class Deduplicator():
         p = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         retval = p.wait()
 
-        alignment_df = pd.read_csv(alignment_file, sep='\t')
-        alignment_df = alignment_df.iloc[:, :12] # only first 12 columns are relevant
-        alignment_df.columns = ["qname", "qlen", "qstart", "qend", "strand", "tname", "tlen", "tstart", "tend", "nmatch", "alen", "mapq"]
+        alignment_df = pd.read_csv(alignment_file, sep='\t', header=None)
+        # alignment_df = alignment_df.iloc[:, :12] # only first 12 columns are relevant
+        alignment_df.columns = ["qname", "qlen", "qstart", "qend", "strand", "tname", "tlen", "tstart", "tend", "nmatch", "alen", "mapq", "xtra1", "xtra2", "xtra3", "xtra4", "xtra5"]
         alignment_df["qname"] = alignment_df["qname"].astype(str)
         alignment_df["tname"] = alignment_df["tname"].astype(str)
 
-        print(alignment_df)
-
         return alignment_df
+    
     def filter_kmer_db(self, kmer_db, lower_bound, upper_bound):
         '''
         Run jellyfish dump on kmer database
