@@ -1,6 +1,7 @@
 
 # python dedup.py --read test/Pt/pt.all.fastq --assembly test/Pt/very_duplicated/Assembly.fasta
 # python dedup.py --read test/Pt_small/pt.aln.fastq --assembly test/Pt/duplicated_asm.fasta
+# python3 dedup.py --read work/test/Pt_small2/ngs.OU59mapped.fastq --assembly work/test/Pt_small2/OU59_asm.fasta
 
 import sys 
 import mmap
@@ -12,6 +13,8 @@ import datetime
 import subprocess
 from Bio import SeqIO
 import plotly.express as px
+from subprocess import run
+
 
 import numpy as np
 
@@ -22,8 +25,6 @@ import numpy as np
 # bwa samse -n 1000 test/Pt/pt.fasta homo.sam .tmp/homozygous_duplicated.fasta > homo.2.sam
 # samtools view -bH homo.2.sam > homo.2.bam
 # sort
-
-
 
 
 
@@ -38,6 +39,7 @@ class Contig():
         self.homo_dup_depth = []
         self.homo_non_dup_depth = []
     
+        self.homo_dup_kmers = []
         self.dnd_ratio = []
 
     def calculate_dnd_ratio(self):
@@ -57,8 +59,8 @@ class Contig():
             return np.convolve(data, np.ones(window_size) / window_size, mode='valid')
        
         moving_ave = moving_average(self.dnd_ratio, 1000)
-        print(self.dnd_ratio)
-        print(moving_ave)
+        # print(self.dnd_ratio)
+        # print(moving_ave)
         pos = [i for i in range(0, len(moving_ave))]
 
         if not os.path.exists("results"):
@@ -75,9 +77,28 @@ class Contig():
         # fig.write_image(f'results/{self.name}_dnd_ratio.png')
         # fig.write_html(f'results/{self.name}_dnd_ratio.html')
 
+    def get_kmers(self, bam):
+        """
+        get kmers from a bam file
+        """
+        logging.info(f"reading bam: {bam} for kmers to {self.name}")
+        cmd = f"samtools view {bam} '{self.name}'"  
+        logging.info(cmd)
+        
+        proc = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE)
 
+        while True:
+            line = proc.stdout.readline()
+            if not line:
+                break
 
+            # print("test:", line.decode('UTF-8'))
+            line = line.decode('UTF-8').strip().split()
+            self.homo_dup_kmers.append(line[0])
 
+    def __str__(self):
+        return f"contig: {self.name}"
+    
 class Deduplicator():
 
 
@@ -98,8 +119,48 @@ class Deduplicator():
         if not os.path.exists(self.tmp_dir):
             os.makedirs(self.tmp_dir)
 
-
     def dedup(self):
+        '''
+        Run the deduplication pipeline
+        '''
+        homo_dup_bam = self.analyze_kmers()
+
+        candidate_pairs = self.find_pairs()
+
+    #     for contig1, contig2 in candidate_pairs:
+    #         self.dedup_pair(contig1, contig2, homo_dedup_bam)
+
+
+    # def dedup_pair(contig1, contig2, )
+
+    def find_pairs(self, containment_threshold=0.2):
+        """
+        
+        containment_threshold: % of kmers that need to be duplicated to qualify match
+        """
+
+        candidate_dedup_pairs = []
+        for c1, contig1 in enumerate(self.contigs):
+            for c2, contig2 in enumerate(self.contigs):
+                if c2 > c1: 
+
+                    common_kmers = len(list(set(contig1.homo_dup_kmers) & set(contig2.homo_dup_kmers))) 
+                    c1_containment = common_kmers / len(contig1.homo_dup_kmers)
+                    logging.info(f"{contig1} {100*containment:.2f}% containment in {contig2}")
+
+                    c2_containment = common_kmers / len(contig2.homo_dup_kmers)
+                    logging.info(f"{contig2} {100*containment:.2f}% containment in {contig1}")
+
+                    if c1_containment > containment_threshold and c1_containment > c2_containment:
+                        candidate_dedup_pairs.append((contig1, contig2))
+
+                    elif c1_containment > containment_threshold and c1_containment > c2_containment:
+                        candidate_dedup_pairs.append((contig2, contig1))
+
+        return candidate_dedup_pairs
+
+
+    def analyze_kmers(self):
 
         # Count kmers
         read_kmer_db = self.make_kmer_db(self.reads, "reads")
@@ -116,9 +177,9 @@ class Deduplicator():
         homozygous_duplicated_kmers = list(set(homozygous_kmers) & set(duplicated_kmers))
         homozygous_non_duplicated_kmers = list(set(homozygous_kmers) & set(non_duplicated_kmers))
 
-        print(f"homo_duplicated: {len(homozygous_duplicated_kmers)}")
-        print(f"homo_non_duplicated: {len(homozygous_non_duplicated_kmers)}")
-        print(f"heterozygou: {len(heterozygous_kmers)}")
+        # print(f"homo_duplicated: {len(homozygous_duplicated_kmers)}")
+        # print(f"homo_non_duplicated: {len(homozygous_non_duplicated_kmers)}")
+        # print(f"heterozygou: {len(heterozygous_kmers)}")
 
         homo_dup_fasta = self.write_kmers(homozygous_duplicated_kmers, "homozygous_duplicated.fasta")
         homo_non_dup_fasta = self.write_kmers(homozygous_non_duplicated_kmers, "homozygous_non_duplicated.fasta")
@@ -140,13 +201,11 @@ class Deduplicator():
             contig.homo_non_dup_depth = homo_non_dup_depths[contig.name]
 
             print(contig)
-            # print(contig.homo_dup_depth)
-            # contig
-            print(len(contig.homo_dup_depth))
-            print([d for d in contig.homo_dup_depth if d > 0])
-            print(len([d for d in contig.homo_dup_depth if d > 0]))
             contig.calculate_dnd_ratio()
             contig.plot_dnd_ratio()
+            contig.get_kmers(homo_dup_bam)
+
+        return homo_dup_bam
 
     def make_kmer_db(self, fasta, db_name, kmer_size=21):
         '''
@@ -258,6 +317,7 @@ class Deduplicator():
         
         return outfile
 
+
     def map_kmers(self, kmer_fasta, outname):
         '''
         map kmers to assembly using bwa aln
@@ -340,7 +400,7 @@ class Deduplicator():
                     contig_depths[chrom] = []
                 contig_depths[chrom].append(int(depth))
         
-        print(contig_depths)
+        # print(contig_depths)
         return contig_depths
 
 def parse_args():
