@@ -1,5 +1,5 @@
 
-# python dedup.py --read test/Pt/pt.all.fastq --assembly test/Pt/very_duplicated/Assembly.fasta
+# python dedup.py --read work/test/Pt/pt.all.fastq --assembly work/test/Pt/very_duplicated/Assembly.fasta
 # python dedup.py --read work/test/Pt_small/pt.aln.fastq --assembly work/test/Pt_small/duplicated_asm.fasta
 # python3 dedup.py --read work/test/Pt_small2/ngs.OU59mapped.fastq --assembly work/test/Pt_small2/OU59_asm.fasta
 # python3 dedup.py --read work/test/simple_contained/simulated.fastq --assembly work/test/simple_contained/assembly.fasta --homozygous_lower_bound 60 --homozygous_upper_bound 100
@@ -22,6 +22,7 @@ import pandas as pd
 from statistics import mean
 import numpy as np
 
+from Contig import Contig
 
 pd.set_option('display.max_rows', 100)
 pd.set_option('display.max_columns', 20)
@@ -34,117 +35,6 @@ pd.set_option('display.max_columns', 20)
 # sort
 
 logging.basicConfig(level=logging.INFO)
-
-class Contig():
-    
-    def __init__(self, name, sequence):
-        self.name = name
-        self.sequence = sequence
-
-        self.homo_dup_depth = []
-        self.homo_non_dup_depth = []
-    
-        self.homo_dup_kmers = []
-        self.dnd_ratio = []
-
-        self.duplicated = []
-
-    def calculate_dnd_ratio(self):
-
-        for pos in range(len(self.homo_dup_depth)):
-            # no homozygous kmers in this position
-            if self.homo_dup_depth[pos] == 0 and self.homo_non_dup_depth[pos] == 0:
-                self.dnd_ratio.append(0.5) # TODO: find a better way to handle no data
-            else:
-                # ie. percent of homozygous kmers that are duplicated
-                self.dnd_ratio.append(self.homo_dup_depth[pos] / (self.homo_dup_depth[pos] + self.homo_non_dup_depth[pos]))    
-    
-    def plot_dnd_ratio(self):
-
-        def moving_average(data, window_size):
-            return np.convolve(data, np.ones(window_size) / window_size, mode='valid')
-       
-        moving_ave = moving_average(self.dnd_ratio, 1000)
-        # print(self.dnd_ratio)
-        # print(moving_ave)
-        pos = [i for i in range(0, len(moving_ave))]
-
-        if not os.path.exists("results"):
-            os.makedirs("results")
-            
-        fig = px.scatter(x=pos, y=moving_ave, labels={'x': 'Position', 'y': '% duplicated kmers'})
-        fig.write_image(f'results/{self.name}_dnd_ratio.png')
-        fig.write_html(f'results/{self.name}_dnd_ratio.html')
-
-
-        # pos = [i for i in range(0, len(self.dnd_ratio))]
-
-        # fig = px.scatter(x=pos, y=self.dnd_ratio, labels={'x': 'Position', 'y': '% duplicated kmers'})
-        # fig.write_image(f'results/{self.name}_dnd_ratio.png')
-        # fig.write_html(f'results/{self.name}_dnd_ratio.html')
-
-    def get_kmers(self, bam):
-        """
-        get kmers from a bam file
-        """
-        logging.info(f"reading bam: {bam} for kmers to {self.name}")
-        cmd = f"samtools view {bam} '{self.name}'"  
-        logging.info(cmd)
-        
-        proc = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE)
-
-        while True:
-            line = proc.stdout.readline()
-            if not line:
-                break
-
-            # print("test:", line.decode('UTF-8'))
-            line = line.decode('UTF-8').strip().split()
-            self.homo_dup_kmers.append(line[0])
-
-    def get_duplicated_sequence(self):
-        pass
-        # if not self.duplicated:
-        #     return None
-        # else:
-        #     # If completely duplicated
-        #     if self.duplicated[1] - self.duplicated[0] == len(self.sequence):
-        #         return f">{self.name}\n{self.sequence}\n"
-            
-        #     # If 5' duplicated
-        #     elif 0 in self.duplicated[0]:
-        #         return f">{self.name}\n{self.sequence[0:self.duplicated[0]]}\n"
-            
-        #     # If 3' duplicated
-        #     else :
-        #         return f">{self.name}\n{self.sequence[self.duplicated[1]:]}\n"
-
-    def get_non_duplicated_sequence(self):
-
-        print(self.duplicated)
-        if not self.duplicated:
-            return f">{self.name}\n{self.sequence}"
-        else:
-            # If completely duplicated
-            for interval in self.duplicated:
-                if interval[1] - interval[0] == len(self.sequence):
-                    return ""
-            
-            # If 5' duplicated
-            for interval in self.duplicated:
-                if 0 in interval:
-                    return f"{self.name}\n{self.sequence[interval[1]:]}\n"
-           
-            # If 3' duplicated
-            for interval in self.duplicated:
-                if inverval[1] == len(self.sequence):
-                    return f"{self.name}\n{self.sequence[0:interval[0]]}\n"
-
-    def __str__(self):
-        return f"contig: {self.name}"
-    
-    def __repr__(self):
-        return f"contig: {self.name}"
 
 class Deduplicator():
 
@@ -186,8 +76,6 @@ class Deduplicator():
         with open(f"deduplicated_contigs.fasta", "w") as file:
             for c in self.contigs:
                 file.write(c.get_non_duplicated_sequence())
-
-        
 
     def dedup_pair(self, contig1, contig2, self_alignment):
         """
@@ -394,13 +282,22 @@ class Deduplicator():
                 if c2 > c1: 
 
                     common_kmers = len(list(set(contig1.homo_dup_kmers) & set(contig2.homo_dup_kmers))) 
-                    c1_containment = common_kmers / len(contig1.homo_dup_kmers)
-                    logging.info(f"duplicates in {contig1} are {100*c1_containment:.2f}% containment in {contig2}")
 
-                    c2_containment = common_kmers / len(contig2.homo_dup_kmers)
-                    logging.info(f"duplicates in {contig2} are {100*c2_containment:.2f}% containment in {contig1}")
+                    if len(contig1.homo_dup_kmers) > 0:
+                        c1_containment = common_kmers / len(contig1.homo_dup_kmers)
+                    else:
+                        c1_containment = 0
+
+                    if len(contig2.homo_dup_kmers) > 0:
+                        c2_containment = common_kmers / len(contig2.homo_dup_kmers)
+                    else:
+                        c2_containment = 0
 
                     if c1_containment >= containment_threshold or c2_containment >= containment_threshold:
+                        logging.info(f"found candidate duplicates")
+                        logging.info(f"\tduplicates in {contig1} are {100*c1_containment:.2f}% contained in {contig2}")
+                        logging.info(f"\tduplicates in {contig2} are {100*c2_containment:.2f}% contained in {contig1}")
+
                         candidate_dedup_pairs.append((contig1, contig2))
 
                     # elif c2_containment > containment_threshold and c2_containment > c1_containment:
@@ -418,9 +315,9 @@ class Deduplicator():
         # Filter relevant kmers
         non_duplicated_kmers = self.filter_kmer_db(assembly_kmer_db, 1, 1)
         duplicated_kmers = self.filter_kmer_db(assembly_kmer_db, 2, 4) # allow 2 to 4 copies TODO: generalize                 #TODO: Repeat kmers?
-        repeat_kmers = self.filter_kmer_db(assembly_kmer_db, 5, 10000)                  #TODO: Repeat kmers?
+        # repeat_kmers = self.filter_kmer_db(assembly_kmer_db, 5, 10000)                  #TODO: Repeat kmers?
         homozygous_kmers = self.filter_kmer_db(read_kmer_db, self.homozygous_lower_bound, self.homozygous_upper_bound)
-        heterozygous_kmers = self.filter_kmer_db(read_kmer_db, 15, 30)
+        # heterozygous_kmers = self.filter_kmer_db(read_kmer_db, 15, 30)
 
         print(f"calculating common kmers")
         homozygous_duplicated_kmers = list(set(homozygous_kmers) & set(duplicated_kmers))
@@ -432,18 +329,20 @@ class Deduplicator():
 
         homo_dup_fasta = self.write_kmers(homozygous_duplicated_kmers, "homozygous_duplicated.fasta")
         homo_non_dup_fasta = self.write_kmers(homozygous_non_duplicated_kmers, "homozygous_non_duplicated.fasta")
-        heterygous_fasta = self.write_kmers(heterozygous_kmers, "heterozygous.fasta")
-        repeat_fasta = self.write_kmers(repeat_kmers, "repeat.fasta")
+        # heterygous_fasta = self.write_kmers(heterozygous_kmers, "heterozygous.fasta")
+        # repeat_fasta = self.write_kmers(repeat_kmers, "repeat.fasta")
 
         homo_dup_bam = self.map_kmers(homo_dup_fasta, "homozygous_duplicated_mapped")
         homo_non_dup_bam = self.map_kmers(homo_non_dup_fasta, "homozygous_non_duplicated_mapped")
-        het_bam = self.map_kmers(heterygous_fasta, "heterozygous_mapped")
-        repeat_bam = self.map_kmers(repeat_fasta, "repeat_mapped")
+        # het_bam = self.map_kmers(heterygous_fasta, "heterozygous_mapped")
+        # repeat_bam = self.map_kmers(repeat_fasta, "repeat_mapped")
 
         homo_dup_depths = self.get_kmer_depth(homo_dup_bam)
         homo_non_dup_depths = self.get_kmer_depth(homo_non_dup_bam)
-        het_depth = self.get_kmer_depth(het_bam)
-        repeat_depth = self.get_kmer_depth(repeat_bam)
+        # het_depth = self.get_kmer_depth(het_bam)
+        # repeat_depth = self.get_kmer_depth(repeat_bam)
+
+        kmers_by_contig = self.get_kmers_by_contig(homo_dup_bam)
 
         for contig in self.contigs:
             contig.homo_dup_depth = homo_dup_depths[contig.name]
@@ -451,10 +350,43 @@ class Deduplicator():
 
             print(contig)
             contig.calculate_dnd_ratio()
-            contig.plot_dnd_ratio()
-            contig.get_kmers(homo_dup_bam)
+            # contig.plot_dnd_ratio()
+            # contig.get_kmers(homo_dup_bam)
+            if contig.name in kmers_by_contig.keys()
+                contig.homo_dup_kmers = kmers_by_contig[contig.name]
+            else:
+                contig.homo_dup_kmers = []
 
         return homo_dup_bam
+
+    def get_kmers_by_contig(self, bam):
+
+        """
+        return a dictionary of kmers contained in each contig, 
+        as provided in a bam mapping file
+        """
+
+        logging.info(f"reading bam: {bam} for kmers")
+        cmd = f"samtools view {bam} -@ 8"  
+        logging.info(cmd)
+        
+        proc = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE)
+
+        kmers_by_contig = {}
+        while True:
+            line = proc.stdout.readline()
+            if not line:
+                break
+
+            line = line.decode('UTF-8').strip().split()
+            contig_name = line[2]
+            kmer = line[0]
+            try:
+                kmers_by_contig[contig_name].append(kmer)
+            except:
+                kmers_by_contig[contig_name] = [kmer]
+        
+        return kmers_by_contig
 
     def make_kmer_db(self, fasta, db_name, kmer_size=21):
         '''
@@ -468,12 +400,16 @@ class Deduplicator():
             db_path: path to jellyfish count file
         '''
         db_path = os.path.join(self.tmp_dir, f"{db_name}.jf")
+            
         cmd = f"jellyfish count -m {kmer_size} -s 100M -t 8 -C {fasta} --output {db_path}"  # TODO: @enhancement add memory opt and bloom filter #TODO: change threading
-        print(cmd)
-        p = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT) 
-        retval = p.wait()
-
-        print(f"make_kmer_db ret: {retval}")
+        logging.info(cmd)
+        
+        if not os.path.exists(db_path):
+            p = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT) 
+            retval = p.wait()
+            print(f"make_kmer_db ret: {retval}")
+        else:
+            print(f"\tSkipping because results already exist")
 
         return db_path
 
@@ -482,9 +418,14 @@ class Deduplicator():
         alignment_file = os.path.join(self.tmp_dir, "self_alignment.paf")
 
         cmd = f"minimap2 -DP -k19 -w19 -m200 {self.assembly} {self.assembly} > {alignment_file}"
-        # cmd = f"minimap2 -x asm20 {self.assembly} {self.assembly} > {alignment_file}"
-        p = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-        retval = p.wait()
+        logging.info(cmd)
+        if not os.path.exists(alignment_file):
+            # cmd = f"minimap2 -x asm20 {self.assembly} {self.assembly} > {alignment_file}"
+            p = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            retval = p.wait()
+        else:
+            print(f"\tSkipping because results already exist")
+       
 
         alignment_df = pd.read_csv(alignment_file, sep='\t', header=None)
         # alignment_df = alignment_df.iloc[:, :12] # only first 12 columns are relevant
@@ -508,12 +449,15 @@ class Deduplicator():
         '''
         out_file = os.path.join(self.tmp_dir, f"jf_dump_{lower_bound}_{upper_bound}")
         cmd = f"jellyfish dump --lower-count {lower_bound} --upper-count {upper_bound} --output {out_file} {kmer_db}"  
-        print(cmd)
-        p = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT) 
-        retval = p.wait()
+        logging.info(cmd)
+        if not os.path.exists(out_file):
+            p = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT) 
+            retval = p.wait()
+            print(f"filter_kmer_db ret: {retval}")
 
-        
-        print(f"filter_kmer_db ret: {retval}")
+        else:
+            print(f"\tSkipping because results already exist")
+
 
         kmers = self.read_kmers_from_fasta(out_file)
 
@@ -577,6 +521,7 @@ class Deduplicator():
         # open(outfile).write("".join([f">{k}\n{k}\n" for k in kmers]))
         
         outfile = os.path.join(self.tmp_dir, outname)
+        
         with open(outfile, 'w') as f:
             f.write("".join([f">{k}\n{k}\n" for k in kmers]))
         
@@ -609,12 +554,19 @@ class Deduplicator():
         
         cmd = f'''
         bwa index {self.assembly}
-        bwa mem -k {self.kmer_size} -T {self.kmer_size} -a -c 500 {self.assembly} {kmer_fasta} > {basename}.sam
-        samtools view -b {basename}.sam > {basename}.bam
+        bwa mem -t 8 -k {self.kmer_size} -T {self.kmer_size} -a -c 500 {self.assembly} {kmer_fasta} > {basename}.sam
+        samtools view -@ 8 -b {basename}.sam > {basename}.bam
         samtools sort -@ 8 -m 1G {basename}.bam > {basename}.sorted.bam
         samtools index {basename}.sorted.bam
         '''
-        subprocess.check_output(cmd, shell=True)
+
+        logging.info(cmd)
+
+        if not os.path.exists(f"{basename}.sorted.bam"):
+            subprocess.check_output(cmd, shell=True)
+
+        else:
+            print(f"\tSkipping because results already exist")
 
         return f"{basename}.sorted.bam"
         
