@@ -3,6 +3,9 @@
 # python dedup.py --read work/test/Pt_small/pt.aln.fastq --assembly work/test/Pt_small/duplicated_asm.fasta
 # python3 dedup.py --read work/test/Pt_small2/ngs.OU59mapped.fastq --assembly work/test/Pt_small2/OU59_asm.fasta
 # python3 dedup.py --read work/test/simple_contained/simulated.fastq --assembly work/test/simple_contained/assembly.fasta --homozygous_lower_bound 60 --homozygous_upper_bound 100
+# python3 dedup.py --read work/test/multiple_contained/simulated.fastq --assembly work/test/multiple_contained/assembly.fasta --homozygous_lower_bound 60 --homozygous_upper_bound 100
+# python3 dedup.py --read work/test/simple_overlap/simulated.fastq --assembly work/test/simple_overlap/assembly.fasta --homozygous_lower_bound 60 --homozygous_upper_bound 100
+# python3 dedup.py --read work/test/complex_contained/simulated.fastq --assembly work/test/complex_contained/assembly.fasta --homozygous_lower_bound 60 --homozygous_upper_bound 100
 
 import sys 
 import mmap
@@ -44,11 +47,10 @@ class Contig():
         self.homo_dup_kmers = []
         self.dnd_ratio = []
 
-        self.duplicated = None
+        self.duplicated = []
 
     def calculate_dnd_ratio(self):
 
-        
         for pos in range(len(self.homo_dup_depth)):
             # no homozygous kmers in this position
             if self.homo_dup_depth[pos] == 0 and self.homo_non_dup_depth[pos] == 0:
@@ -195,21 +197,24 @@ class Deduplicator():
         contig1 is query
         contig2 is target
         """
-        # print(self_alignment.head(50))
 
         alignment_df = self_alignment[(self_alignment["qname"] == contig1.name) & (self_alignment["tname"] == contig2.name)]
         if not alignment_df.empty:
             # print(alignment_df)
             alignment_df.to_csv("alignment.paf", sep="\t", header=False, index=False)
 
+        print(alignment_df)
         print(alignment_df.columns)
         # Get average dnd ratio over the interval of the alignment for both the target and query
         alignment_df['q_dnd'] = alignment_df.apply(lambda row: mean(contig1.dnd_ratio[row['qstart']:row['qend']]), axis=1)
         alignment_df['t_dnd'] = alignment_df.apply(lambda row: mean(contig2.dnd_ratio[row['tstart']:row['tend']]), axis=1)
         
-        # both query and target must be duplicated over alignemtn to consider aligmnet
+        # Either query or target must be duplicated over alignment to consider aligmnet
         dedup_threshold = 0.6
-        alignment_df = alignment_df[(alignment_df["q_dnd"] >= dedup_threshold) & (alignment_df["t_dnd"] >= dedup_threshold)]
+        print(alignment_df)
+
+        alignment_df = alignment_df[(alignment_df["q_dnd"] >= dedup_threshold) | (alignment_df["t_dnd"] >= dedup_threshold)]
+        print("alignment df after filtering by dnd ratio")
         print(alignment_df)
 
         alignment_df.sort_values(by=['qstart', 'qend', 'tstart', 'tend'], inplace=True)
@@ -220,7 +225,6 @@ class Deduplicator():
 
         # Iterate through each row and check if the interval is not completely contained in any previous row
         # TODO handle both query and target overlapping, even though really they should be the same...
-
 
         # for i, row in alignment_df.iterrows():
         #     if not any(
@@ -247,6 +251,7 @@ class Deduplicator():
                 indices_to_keep.append(idx)
         
         print(f"indicies to keep: {indices_to_keep}")
+        print("alignment df after removing contained alignments")
         print(alignment_df)
         # # Create a new DataFrame with the selected rows
         # alignment_df = alignment_df.loc[indices_to_keep]
@@ -292,21 +297,18 @@ class Deduplicator():
 
         # Reset the index of the resulting DataFrame
         result_df.reset_index(drop=True, inplace=True)
-
+        alignment_df = result_df.copy()
         # Display the combined DataFrame
-        print(result_df)  
-
-
-        print(f"indicies to keep: {indices_to_keep}")
+        print("alignment df after chaining alignments")
         print(alignment_df)
-        # Create a new DataFrame with the selected rows
-        alignment_df = alignment_df.loc[indices_to_keep]
 
-        alignment_df.reset_index(drop=True, inplace=True)   
-        print(alignment_df)
-        
+
+        # TODO: what if there is more than 1 alignment after filtering?
+        print("taking just the top alignment") #TODO: check that it's actually the best alignment
+        alignment_df = alignment_df.iloc[:1, :]
+
         # TODO: probably add check that alignments have overlapping homozyous duplicated kmers...
-
+        # TODO: unnecessary to do this check if we are only taking the top alignment
         contig_1_duplication = list(zip(alignment_df['qstart'], alignment_df['qend']))
         contig_2_duplication = list(zip(alignment_df['tstart'], alignment_df['tend']))
 
@@ -316,13 +318,18 @@ class Deduplicator():
         print(f"Contig 1: {contig1} is {100*contig1_percent_duplicated:.2f}% duplicated")
         print(f"Contig 2: {contig2} is {100*contig2_percent_duplicated:.2f}% duplicated")
 
-
         full_duplication_threshold = 0.9
 
+        contig1_dnd = mean(contig1.dnd_ratio[alignment_df['qstart'][0]:alignment_df['qend'][0]]) 
+        contig2_dnd = mean(contig2.dnd_ratio[alignment_df['tstart'][0]:alignment_df['tend'][0]])
 
-        # TODO: this logic assumes all contig aligments are chained together, which is not currently the case
         # TODO: make this more dry
-        if contig1_percent_duplicated > contig2_percent_duplicated:
+        if len(alignment_df) == 0:
+            print("removed all alignments... have nothing to deduplicat on")
+
+        # Contig 1 has more duplicated kmers
+        # elif contig1_dnd > contig2_dnd:
+        elif contig1_percent_duplicated > contig2_percent_duplicated:
             print(f"do deduplication on contig 1: {contig1}")
             if contig1_percent_duplicated > full_duplication_threshold:
                 print(f"do full deduplication on contig 1: {contig1}")
@@ -343,7 +350,8 @@ class Deduplicator():
                     contig1.duplicated.append((min_idx, len(contig1.sequence)))
                 else:
                     print(f"What to deduplicate, but can't figure out where...")
-
+        
+        # Contig 1 has more duplicated kmers
         else:
             print(f"do deduplication on contig 2: {contig2}")
             if contig2_percent_duplicated > full_duplication_threshold:
@@ -377,7 +385,6 @@ class Deduplicator():
 
     def find_pairs(self, containment_threshold=0.2):
         """
-        
         containment_threshold: % of kmers that need to be duplicated to qualify match
         """
 
@@ -410,7 +417,7 @@ class Deduplicator():
 
         # Filter relevant kmers
         non_duplicated_kmers = self.filter_kmer_db(assembly_kmer_db, 1, 1)
-        duplicated_kmers = self.filter_kmer_db(assembly_kmer_db, 2, 2)                  #TODO: Repeat kmers?
+        duplicated_kmers = self.filter_kmer_db(assembly_kmer_db, 2, 4) # allow 2 to 4 copies TODO: generalize                 #TODO: Repeat kmers?
         repeat_kmers = self.filter_kmer_db(assembly_kmer_db, 5, 10000)                  #TODO: Repeat kmers?
         homozygous_kmers = self.filter_kmer_db(read_kmer_db, self.homozygous_lower_bound, self.homozygous_upper_bound)
         heterozygous_kmers = self.filter_kmer_db(read_kmer_db, 15, 30)
