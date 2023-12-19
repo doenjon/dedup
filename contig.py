@@ -108,8 +108,8 @@ class Contig():
                 # if inverval[1] == len(self.sequence):
                     return f"{self.name}\n{self.sequence[0:interval[0]]}\n"
 
-    def __str__(self):
-        return f"contig: {self.name}"
+    # def __str__(self):
+    #     return f"contig: {self.name}"
     
     def __repr__(self):
-        return f"contig: {self.name}"
+        return f"contig: {self.name} ({len(self.sequence)})"

@@ -109,8 +109,8 @@ class Deduplicator():
         contig2_percent_duplicated = (best_alignment["tend"] - best_alignment["tstart"]) / len(contig2.sequence)
         print("--------------------------------------------------------------------------------")
 
-        print(f"Contig 1: {contig1} is {100*contig1_percent_duplicated:.2f}% duplicated")
-        print(f"Contig 2: {contig2} is {100*contig2_percent_duplicated:.2f}% duplicated")
+        print(f"{contig1} is {100*contig1_percent_duplicated:.2f}% duplicated")
+        print(f"{contig2} is {100*contig2_percent_duplicated:.2f}% duplicated")
         print(best_alignment)
         full_duplication_threshold = 0.9
 
@@ -120,41 +120,41 @@ class Deduplicator():
         # Contig 1 has more duplicated kmers
         # elif contig1_dnd > contig2_dnd:
         if contig1_percent_duplicated > contig2_percent_duplicated:
-            print(f"do deduplication on contig 1: {contig1}")
+            print(f"do deduplication on {contig1}")
             if contig1_percent_duplicated > full_duplication_threshold:
-                print(f"do full deduplication on contig 1: {contig1}")
+                print(f"do full deduplication on : {contig1}")
                 contig1.duplicated = [(0, len(contig1.sequence))]
             else:
-                print(f"do partial deduplication on contig 1: {contig1}")
+                print(f"do partial deduplication on {contig1}")
 
-                end_buffer = 20000
+                end_buffer = 50000
                 print(f"min_idx: {best_alignment['qstart']}\nmax_idx: {best_alignment['qend']}")
 
                 if best_alignment["qstart"] < end_buffer:
-                    print(f"do deduplication on start of ccontig 1: {contig1}")
+                    print(f"do deduplication on start of {contig1}")
                     contig1.duplicated.append((0, best_alignment['qend']))
                 elif best_alignment["qend"] > len(contig1.sequence) - end_buffer:
-                    print(f"do deduplication on end of contig 1: {contig1}")
+                    print(f"do deduplication on end of {contig1}")
                     contig1.duplicated.append((best_alignment['qstart'], len(contig1.sequence)))
                 else:
                     print(f"What to deduplicate, but can't figure out where...")
         
-        # Contig 1 has more duplicated kmers
+        # Contig 2 has more duplicated kmers
         else:
-            print(f"do deduplication on contig 2: {contig2}")
+            print(f"do deduplication on {contig2}")
             if contig2_percent_duplicated > full_duplication_threshold:
-                print(f"do full deduplication on contig 2: {contig2}")
+                print(f"do full deduplication on {contig2}")
                 contig2.duplicated = [(0, len(contig2.sequence))]
 
             else:
-                print(f"do partial deduplication on contig 2: {contig2}")  
+                print(f"do partial deduplication on {contig2}")  
                 print(f"min_idx: {best_alignment['tstart']}\nmax_idx: {best_alignment['tend']}")
                 end_buffer = 20000
                 if best_alignment["tstart"] < end_buffer:
-                    print(f"do deduplication on start of contig 2: {contig2}")
+                    print(f"do deduplication on start of {contig2}")
                     contig2.duplicated.append((0, best_alignment["tend"]))
-                elif best_alignment["tend"] > len(contig1.sequence) - end_buffer:
-                    print(f"do deduplication on end of contig 2: {contig2}")
+                elif best_alignment["tend"] > len(contig2.sequence) - end_buffer:
+                    print(f"do deduplication on end of {contig2}")
                     contig2.duplicated.append((best_alignment["tstart"], len(contig2.sequence)))
                 else:
                     print(f"What to deduplicate, but can't figure out where...")

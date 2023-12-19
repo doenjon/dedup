@@ -106,7 +106,7 @@ class Alignment:
 
                 # print(node1, node2)
 
-                max_gap = 10000
+                max_gap = 20000
 
                 # if conditions satisfied, create an edge
                 # first node must start before start of second node
