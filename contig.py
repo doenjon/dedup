@@ -1,5 +1,4 @@
 
-
 class Contig():
     
     def __init__(self, name, sequence):
@@ -19,10 +18,13 @@ class Contig():
         for pos in range(len(self.homo_dup_depth)):
             # no homozygous kmers in this position
             if self.homo_dup_depth[pos] == 0 and self.homo_non_dup_depth[pos] == 0:
-                self.dnd_ratio.append(0.5) # TODO: find a better way to handle no data
+                self.dnd_ratio.append(0) # TODO: find a better way to handle no data
             else:
                 # ie. percent of homozygous kmers that are duplicated
-                self.dnd_ratio.append(self.homo_dup_depth[pos] / (self.homo_dup_depth[pos] + self.homo_non_dup_depth[pos]))    
+                dnd = self.homo_dup_depth[pos] / (self.homo_dup_depth[pos] + self.homo_non_dup_depth[pos])
+                # normalize to [-1,1]
+                dnd = 2*dnd - 1
+                self.dnd_ratio.append(dnd)    
     
     def plot_dnd_ratio(self):
 
@@ -102,7 +104,8 @@ class Contig():
            
             # If 3' duplicated
             for interval in self.duplicated:
-                if inverval[1] == len(self.sequence):
+                if len(self.sequence) in interval:
+                # if inverval[1] == len(self.sequence):
                     return f"{self.name}\n{self.sequence[0:interval[0]]}\n"
 
     def __str__(self):

@@ -21,13 +21,23 @@ class Alignment:
             score, aln = self.get_best_alignment(node)
             alignments.append((score, aln))
         
+        if len(alignments) == 0:
+            print("No alignment found")
+            return None
+
         alignments.sort(key=lambda x: x[0], reverse=True)
+        
+        best_alignment_score = alignments[0][0]
         best_alignment_path = alignments[0][1]
+
+        if best_alignment_score <= 0:
+            print("No alignment found")
+            return None
 
         start_node = best_alignment_path[0]
         end_node = best_alignment_path[-1]
         result = {"qstart": start_node.contig1_start, "qend": end_node.contig1_end, "tstart": start_node.contig2_start, "tend": end_node.contig2_end}
-        print(f"Best alignment: {result}")
+        # print(f"Best alignment: {result}")
 
         return result
     

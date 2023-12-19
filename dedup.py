@@ -107,10 +107,11 @@ class Deduplicator():
 
         contig1_percent_duplicated = (best_alignment["qend"] - best_alignment["qstart"]) / len(contig1.sequence)
         contig2_percent_duplicated = (best_alignment["tend"] - best_alignment["tstart"]) / len(contig2.sequence)
+        print("--------------------------------------------------------------------------------")
 
         print(f"Contig 1: {contig1} is {100*contig1_percent_duplicated:.2f}% duplicated")
         print(f"Contig 2: {contig2} is {100*contig2_percent_duplicated:.2f}% duplicated")
-
+        print(best_alignment)
         full_duplication_threshold = 0.9
 
         contig1_dnd = mean(contig1.dnd_ratio[best_alignment['qstart']:best_alignment['qend']]) 
@@ -177,7 +178,7 @@ class Deduplicator():
             for c2, contig2 in enumerate(self.contigs):
                 if c2 > c1: 
 
-                    common_kmers = len(list(set(contig1.homo_dup_kmers) & set(contig2.homo_dup_kmers))) 
+                    common_kmers = len(set(contig1.homo_dup_kmers) & set(contig2.homo_dup_kmers)) 
 
                     if len(contig1.homo_dup_kmers) > 0:
                         c1_containment = common_kmers / len(contig1.homo_dup_kmers)
@@ -240,11 +241,12 @@ class Deduplicator():
 
         kmers_by_contig = self.get_kmers_by_contig(homo_dup_bam)
 
+        logging.info("Calculating contig statistics")
         for contig in self.contigs:
             contig.homo_dup_depth = homo_dup_depths[contig.name]
             contig.homo_non_dup_depth = homo_non_dup_depths[contig.name]
 
-            print(contig)
+            # print(contig)
             contig.calculate_dnd_ratio()
             # contig.plot_dnd_ratio()
             # contig.get_kmers(homo_dup_bam)
