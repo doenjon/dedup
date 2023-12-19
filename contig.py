@@ -1,4 +1,5 @@
 
+
 class Contig():
     
     def __init__(self, name, sequence):

@@ -21,8 +21,10 @@ from subprocess import run
 import pandas as pd
 from statistics import mean
 import numpy as np
+import shutil
 
-from Contig import Contig
+from contig import Contig
+from alignment import Alignment
 
 pd.set_option('display.max_rows', 100)
 pd.set_option('display.max_columns', 20)
@@ -50,10 +52,16 @@ class Deduplicator():
         self.homozygous_lower_bound = params.homozygous_lower_bound
         self.homozygous_upper_bound = params.homozygous_upper_bound
 
+        # TODO change to TemporaryDirectory
         self.tmp_dir = ".tmp"
+        if not params.save_tmp and os.path.exists(self.tmp_dir):
+            shutil.rmtree(self.tmp_dir)
         # TODO: clean up tmp after successful run
         if not os.path.exists(self.tmp_dir):
             os.makedirs(self.tmp_dir)
+
+
+            
 
     def dedup(self):
         '''
@@ -91,151 +99,42 @@ class Deduplicator():
             # print(alignment_df)
             alignment_df.to_csv("alignment.paf", sep="\t", header=False, index=False)
 
-        print(alignment_df)
-        print(alignment_df.columns)
-        # Get average dnd ratio over the interval of the alignment for both the target and query
-        alignment_df['q_dnd'] = alignment_df.apply(lambda row: mean(contig1.dnd_ratio[row['qstart']:row['qend']]), axis=1)
-        alignment_df['t_dnd'] = alignment_df.apply(lambda row: mean(contig2.dnd_ratio[row['tstart']:row['tend']]), axis=1)
-        
-        # Either query or target must be duplicated over alignment to consider aligmnet
-        dedup_threshold = 0.6
-        print(alignment_df)
+        best_alignment = Alignment(contig1, contig2, alignment_df).find_best_alignment()
 
-        alignment_df = alignment_df[(alignment_df["q_dnd"] >= dedup_threshold) | (alignment_df["t_dnd"] >= dedup_threshold)]
-        print("alignment df after filtering by dnd ratio")
-        print(alignment_df)
+        if best_alignment is None:
+            print("no alignment found -- have not handled this")
+            return
 
-        alignment_df.sort_values(by=['qstart', 'qend', 'tstart', 'tend'], inplace=True)
-        
-        # Remove alignments that are completely contained in other alignments
-        # Create an empty list to store the indices of rows to be kept
-        indices_to_keep = []
-
-        # Iterate through each row and check if the interval is not completely contained in any previous row
-        # TODO handle both query and target overlapping, even though really they should be the same...
-
-        # for i, row in alignment_df.iterrows():
-        #     if not any(
-        #         (
-        #             (row['qstart'] >= alignment_df.loc[j, 'qstart']) and (row['qend'] <= alignment_df.loc[j, 'qend'])
-        #         ) or (
-        #             (row['qstart'] <= alignment_df.loc[j, 'qend']) and (row['qend'] >= alignment_df.loc[j, 'qstart'])
-        #         )
-        #         for j in indices_to_keep
-        #     ):
-        #         indices_to_keep.append(i)
-
-        for idx, row in alignment_df.iterrows():
-            if not any(
-                (
-                    (row['qstart'] >= alignment_df.loc[j, 'qstart']) and (row['qend'] <= alignment_df.loc[j, 'qend']) or
-                    (row['qstart'] <= alignment_df.loc[j, 'qend']) and (row['qend'] >= alignment_df.loc[j, 'qstart'])  
-                ) and (
-                    (row['tstart'] >= alignment_df.loc[j, 'tstart']) and (row['tend'] <= alignment_df.loc[j, 'tend']) or
-                    (row['tstart'] <= alignment_df.loc[j, 'tend']) and (row['tend'] >= alignment_df.loc[j, 'tstart'])
-                )
-                for j in indices_to_keep
-            ):
-                indices_to_keep.append(idx)
-        
-        print(f"indicies to keep: {indices_to_keep}")
-        print("alignment df after removing contained alignments")
-        print(alignment_df)
-        # # Create a new DataFrame with the selected rows
-        # alignment_df = alignment_df.loc[indices_to_keep]
-
-        # alignment_df.reset_index(drop=True, inplace=True) 
-
-        filtered_df = alignment_df.loc[indices_to_keep].copy()
-
-        # Step 2: Combine overlapping intervals
-
-        def combine_overlapping_intervals(row, existing_row, overlap_threshold):
-            # Combine the overlapping intervals if they are within the threshold
-            if (
-                (row['qstart'] <= existing_row['qend']) and (row['qend'] >= existing_row['qstart']) and
-                (row['tstart'] <= existing_row['tend']) and (row['tend'] >= existing_row['tstart'])
-            ):
-                if (
-                    (abs(row['qend'] - existing_row['qstart']) <= overlap_threshold) or
-                    (abs(existing_row['qend'] - row['qstart']) <= overlap_threshold) or
-                    (abs(row['tend'] - existing_row['tstart']) <= overlap_threshold) or
-                    (abs(existing_row['tend'] - row['tstart']) <= overlap_threshold)
-                ):
-                    # Combine the overlapping intervals
-                    return True
-            return False
-
-
-        result_df = pd.DataFrame(columns=filtered_df.columns)
-        overlap_threshold = 10  # You can adjust this threshold as needed
-
-        for idx, row in filtered_df.iterrows():
-            # Check if the current interval overlaps with the last added interval
-            last_idx = result_df.index[-1] if not result_df.empty else None
-            if last_idx is not None and combine_overlapping_intervals(row, result_df.loc[last_idx], overlap_threshold):
-                # Combine the overlapping intervals
-                result_df.loc[last_idx, 'qstart'] = min(row['qstart'], result_df.loc[last_idx, 'qstart'])
-                result_df.loc[last_idx, 'qend'] = max(row['qend'], result_df.loc[last_idx, 'qend'])
-                result_df.loc[last_idx, 'tstart'] = min(row['tstart'], result_df.loc[last_idx, 'tstart'])
-                result_df.loc[last_idx, 'tend'] = max(row['tend'], result_df.loc[last_idx, 'tend'])
-            else:
-                # Add the current interval to the result DataFrame
-                result_df = pd.concat([result_df, pd.DataFrame([row])])
-
-        # Reset the index of the resulting DataFrame
-        result_df.reset_index(drop=True, inplace=True)
-        alignment_df = result_df.copy()
-        # Display the combined DataFrame
-        print("alignment df after chaining alignments")
-        print(alignment_df)
-
-
-        # TODO: what if there is more than 1 alignment after filtering?
-        print("taking just the top alignment") #TODO: check that it's actually the best alignment
-        alignment_df = alignment_df.iloc[:1, :]
-
-        # TODO: probably add check that alignments have overlapping homozyous duplicated kmers...
-        # TODO: unnecessary to do this check if we are only taking the top alignment
-        contig_1_duplication = list(zip(alignment_df['qstart'], alignment_df['qend']))
-        contig_2_duplication = list(zip(alignment_df['tstart'], alignment_df['tend']))
-
-        contig1_percent_duplicated = sum([abs(i[0] - i[1]) for i in contig_1_duplication]) / len(contig1.sequence)
-        contig2_percent_duplicated = sum([abs(i[0] - i[1]) for i in contig_2_duplication]) / len(contig2.sequence)
+        contig1_percent_duplicated = (best_alignment["qend"] - best_alignment["qstart"]) / len(contig1.sequence)
+        contig2_percent_duplicated = (best_alignment["tend"] - best_alignment["tstart"]) / len(contig2.sequence)
 
         print(f"Contig 1: {contig1} is {100*contig1_percent_duplicated:.2f}% duplicated")
         print(f"Contig 2: {contig2} is {100*contig2_percent_duplicated:.2f}% duplicated")
 
         full_duplication_threshold = 0.9
 
-        contig1_dnd = mean(contig1.dnd_ratio[alignment_df['qstart'][0]:alignment_df['qend'][0]]) 
-        contig2_dnd = mean(contig2.dnd_ratio[alignment_df['tstart'][0]:alignment_df['tend'][0]])
-
-        # TODO: make this more dry
-        if len(alignment_df) == 0:
-            print("removed all alignments... have nothing to deduplicat on")
+        contig1_dnd = mean(contig1.dnd_ratio[best_alignment['qstart']:best_alignment['qend']]) 
+        contig2_dnd = mean(contig2.dnd_ratio[best_alignment['tstart']:best_alignment['tend']])
 
         # Contig 1 has more duplicated kmers
         # elif contig1_dnd > contig2_dnd:
-        elif contig1_percent_duplicated > contig2_percent_duplicated:
+        if contig1_percent_duplicated > contig2_percent_duplicated:
             print(f"do deduplication on contig 1: {contig1}")
             if contig1_percent_duplicated > full_duplication_threshold:
                 print(f"do full deduplication on contig 1: {contig1}")
                 contig1.duplicated = [(0, len(contig1.sequence))]
             else:
                 print(f"do partial deduplication on contig 1: {contig1}")
-                min_idx = min([min(i[0], i[1]) for i in contig_1_duplication])
-                max_idx = max([max(i[0], i[1]) for i in contig_1_duplication])
 
                 end_buffer = 20000
-                print(f"min_idx: {min_idx}\nmax_idx: {max_idx}")
+                print(f"min_idx: {best_alignment['qstart']}\nmax_idx: {best_alignment['qend']}")
 
-                if min_idx < end_buffer:
+                if best_alignment["qstart"] < end_buffer:
                     print(f"do deduplication on start of ccontig 1: {contig1}")
-                    contig1.duplicated.append((0, max_idx))
-                elif max_idx > len(contig1.sequence) - end_buffer:
+                    contig1.duplicated.append((0, best_alignment['qend']))
+                elif best_alignment["qend"] > len(contig1.sequence) - end_buffer:
                     print(f"do deduplication on end of contig 1: {contig1}")
-                    contig1.duplicated.append((min_idx, len(contig1.sequence)))
+                    contig1.duplicated.append((best_alignment['qstart'], len(contig1.sequence)))
                 else:
                     print(f"What to deduplicate, but can't figure out where...")
         
@@ -248,17 +147,14 @@ class Deduplicator():
 
             else:
                 print(f"do partial deduplication on contig 2: {contig2}")  
-                min_idx = min([min(i[0], i[1]) for i in contig_2_duplication])
-                max_idx = max([max(i[0], i[1]) for i in contig_2_duplication])
-
-                print(f"min_idx: {min_idx}\nmax_idx: {max_idx}")
+                print(f"min_idx: {best_alignment['tstart']}\nmax_idx: {best_alignment['tend']}")
                 end_buffer = 20000
-                if min_idx < end_buffer:
+                if best_alignment["tstart"] < end_buffer:
                     print(f"do deduplication on start of contig 2: {contig2}")
-                    contig2.duplicated.append((0, max_idx))
-                elif max_idx > len(contig1.sequence) - end_buffer:
+                    contig2.duplicated.append((0, best_alignment["tend"]))
+                elif best_alignment["tend"] > len(contig1.sequence) - end_buffer:
                     print(f"do deduplication on end of contig 2: {contig2}")
-                    contig2.duplicated.append((min_idx, len(contig2.sequence)))
+                    contig2.duplicated.append((best_alignment["tstart"], len(contig2.sequence)))
                 else:
                     print(f"What to deduplicate, but can't figure out where...")
 
@@ -352,7 +248,7 @@ class Deduplicator():
             contig.calculate_dnd_ratio()
             # contig.plot_dnd_ratio()
             # contig.get_kmers(homo_dup_bam)
-            if contig.name in kmers_by_contig.keys()
+            if contig.name in kmers_by_contig.keys():
                 contig.homo_dup_kmers = kmers_by_contig[contig.name]
             else:
                 contig.homo_dup_kmers = []
@@ -658,6 +554,11 @@ def parse_args():
                         default=50,
                         help='<min max> for kmer freuqency of homozygous peak', 
                         required=False)
+    parser.add_argument('--save_tmp', 
+                        action='store_true',
+                        help='save temporary files',
+                        required=False)
+    
     args = parser.parse_args()
 
     return args
