@@ -10,7 +10,10 @@ class Alignment:
         self.contig1 = contig1
         self.contig2 = contig2
         self.edges = []
+
         self.nodes = self.parse_paf(paf_df)
+
+        self.max_gap = 50000
 
     def find_best_alignment(self):
 
@@ -36,7 +39,19 @@ class Alignment:
 
         start_node = best_alignment_path[0]
         end_node = best_alignment_path[-1]
-        result = {"qstart": start_node.contig1_start, "qend": end_node.contig1_end, "tstart": start_node.contig2_start, "tend": end_node.contig2_end}
+        
+        qstart = start_node.contig1_start
+        qend = end_node.contig1_end
+
+        # handle reverse alignments
+        if start_node.direction == "+":
+            tstart = start_node.contig2_start
+            tend = end_node.contig2_end
+        elif start_node.direction == "-":
+            tstart = end_node.contig2_start
+            tend = start_node.contig2_end
+
+        result = {"qstart": qstart, "qend": qend, "tstart": tstart, "tend": tend}
         # print(f"Best alignment: {result}")
 
         return result
@@ -53,7 +68,7 @@ class Alignment:
 
         # recursive case - node has parents
         best_path = []
-        score = 0
+        score = float("-inf")
         for parent_edge in node.parents:
             edge_score = parent_edge.score
             parent_node = parent_edge.parent
@@ -94,7 +109,6 @@ class Alignment:
 
             nodes.append(node)
         
-        # print(nodes)
         return nodes
     
     def create_DAG(self):
@@ -106,50 +120,98 @@ class Alignment:
 
                 # print(node1, node2)
 
-                max_gap = 20000
-
+                # if node2.contig1_end > node1.contig1_end and node2.contig2_end > node1.contig2_end:
+                #     print("\tnode2 contigs end after node1 contigs")
+                # if node2.contig1_start > node1.contig1_start and node2.contig2_start > node1.contig2_start:
+                #     print("\tnode2 contigs start after node1 contigs")    
+                # if node2.direction == node1.direction:
+                #     print("\tnode2 and node1 are in the same direction")
+                # if node2.contig1_start - node1.contig1_end < self.max_gap:  
+                #     print("\tcontig 1 gap is less than max gap")
+                # if node2.contig2_start - node1.contig2_end < self.max_gap:
+                #     print("\tcontig 2 gap is less than max gap")
                 # if conditions satisfied, create an edge
                 # first node must start before start of second node
                 # and first node must end before end of second node
                 # and first node must be in the same direction as second node
                 # gap between nodes must be less than max_gap
-                if node2.contig1_end > node1.contig1_end and node2.contig2_end > node1.contig2_end and \
-                    node2.contig1_start > node1.contig1_start and node2.contig2_start > node1.contig2_start and \
-                    node2.direction == node1.direction and \
-                    node2.contig1_start - node1.contig1_end < max_gap and \
-                    node2.contig2_start - node1.contig2_end < max_gap:
-                    
-                    # print("creating edge")
-                    # score is dnd_ratio of the segment weighted by length. The segment is the gap in contig1 and gap in contig2
-                    # print(node1.contig1_end)
-                    # print(node2.contig1_start)
-                    # print(self.contig1.dnd_ratio[node1.contig1_end:node2.contig1_start])
-                    contig_1_start = min(node1.contig1_end,node2.contig1_start)
-                    contig_1_end = max(node1.contig1_end,node2.contig1_start)
-                    contig_2_start = min(node1.contig2_end,node2.contig2_start)
-                    contig_2_end = max(node1.contig2_end,node2.contig2_start)
+                
+                # Forward and reverse alignments have different logic
+                if node2.direction == node1.direction == "+":
 
-                    # print(f"contig_1_start: {contig_1_start}")
-                    # print(f"contig_1_end: {contig_1_end}")
-                    # print(f"contig_2_start: {contig_2_start}")
-                    # print(f"contig_2_end: {contig_2_end}")
+                    if  node2.contig1_end > node1.contig1_end and node2.contig2_end > node1.contig2_end and \
+                        node2.contig1_start > node1.contig1_start and node2.contig2_start > node1.contig2_start and \
+                        node2.contig1_start - node1.contig1_end < self.max_gap and \
+                        node2.contig2_start - node1.contig2_end < self.max_gap:
+                        
+                        # print("creating edge")
+                        # score is dnd_ratio of the segment weighted by length. The segment is the gap in contig1 and gap in contig2
+                        # print(node1.contig1_end)
+                        # print(node2.contig1_start)
+                        # print(self.contig1.dnd_ratio[node1.contig1_end:node2.contig1_start])
+                        contig_1_start = min(node1.contig1_end,node2.contig1_start)
+                        contig_1_end = max(node1.contig1_end,node2.contig1_start)
+                        contig_2_start = min(node1.contig2_end,node2.contig2_start)
+                        contig_2_end = max(node1.contig2_end,node2.contig2_start)
 
-                    contig1_mean_dnd = 0 if (contig_1_end - contig_1_start) == 0 else mean(self.contig1.dnd_ratio[contig_1_start:contig_1_end])
-                    contig2_mean_dnd = 0 if (contig_2_end - contig_2_start) == 0 else mean(self.contig2.dnd_ratio[contig_2_start:contig_2_end])
-                    
-                    # print("contig1_mean_dnd: ", contig1_mean_dnd)
-                    # print("contig2_mean_dnd: ", contig2_mean_dnd)
-                    score = (node2.contig1_start - node1.contig1_end) * contig1_mean_dnd + \
-                            (node2.contig2_start - node1.contig2_end) * contig2_mean_dnd
-                    #print(f"Score: {score}")
-                    edge = Edge(node1, node2, score)
+                        # print(f"contig_1_start: {contig_1_start}")
+                        # print(f"contig_1_end: {contig_1_end}")
+                        # print(f"contig_2_start: {contig_2_start}")
+                        # print(f"contig_2_end: {contig_2_end}")
 
-                    # print(edge)
-                    node1.children.append(edge)
-                    node2.parents.append(edge)
-                    self.edges.append(edge)
+                        contig1_mean_dnd = 0 if (contig_1_end - contig_1_start) == 0 else mean(self.contig1.dnd_ratio[contig_1_start:contig_1_end])
+                        contig2_mean_dnd = 0 if (contig_2_end - contig_2_start) == 0 else mean(self.contig2.dnd_ratio[contig_2_start:contig_2_end])
+                        
+                        # print("contig1_mean_dnd: ", contig1_mean_dnd)
+                        # print("contig2_mean_dnd: ", contig2_mean_dnd)
+                        score = (node2.contig1_start - node1.contig1_end) * contig1_mean_dnd + \
+                                (node2.contig2_start - node1.contig2_end) * contig2_mean_dnd
+                        #print(f"Score: {score}")
+                        edge = Edge(node1, node2, score)
+
+                        # print(edge)
+                        node1.children.append(edge)
+                        node2.parents.append(edge)
+                        self.edges.append(edge)
+
+                elif node2.direction == node1.direction == "-":
+
+                    if  node2.contig1_end > node1.contig1_end     and node2.contig2_end < node1.contig2_end and \
+                        node2.contig1_start > node1.contig1_start and node2.contig2_start < node1.contig2_start and \
+                        node2.contig1_start - node1.contig1_end < self.max_gap and \
+                        node1.contig2_start - node2.contig2_end < self.max_gap:
+                        
+                        # print("creating edge")
+                        # score is dnd_ratio of the segment weighted by length. The segment is the gap in contig1 and gap in contig2
+                        # print(node1.contig1_end)
+                        # print(node2.contig1_start)
+                        # print(self.contig1.dnd_ratio[node1.contig1_end:node2.contig1_start])
+                        contig_1_start = min(node1.contig1_end,node2.contig1_start)
+                        contig_1_end = max(node1.contig1_end,node2.contig1_start)
+                        contig_2_start = min(node1.contig2_end,node2.contig2_start)
+                        contig_2_end = max(node1.contig2_end,node2.contig2_start)
+
+                        # print(f"contig_1_start: {contig_1_start}")
+                        # print(f"contig_1_end: {contig_1_end}")
+                        # print(f"contig_2_start: {contig_2_start}")
+                        # print(f"contig_2_end: {contig_2_end}")
+
+                        contig1_mean_dnd = 0 if (contig_1_end - contig_1_start) == 0 else mean(self.contig1.dnd_ratio[contig_1_start:contig_1_end])
+                        contig2_mean_dnd = 0 if (contig_2_end - contig_2_start) == 0 else mean(self.contig2.dnd_ratio[contig_2_start:contig_2_end])
+                        
+                        # print("contig1_mean_dnd: ", contig1_mean_dnd)
+                        # print("contig2_mean_dnd: ", contig2_mean_dnd)
+                        score = (node2.contig1_start - node1.contig1_end) * contig1_mean_dnd + \
+                                (node2.contig2_start - node1.contig2_end) * contig2_mean_dnd
+                        score = -score
+                        #print(f"Score: {score}")
+                        edge = Edge(node1, node2, score)
+
+                        # print(edge)
+                        node1.children.append(edge)
+                        node2.parents.append(edge)
+                        self.edges.append(edge)
         
-
 class Node:
     def __init__(self, contig1_start, contig1_end, contig2_start, contig2_end, direction, score):
         self.contig1_start = contig1_start

@@ -1,11 +1,12 @@
 
-# python dedup.py --read work/test/Pt/pt.all.fastq --assembly work/test/Pt/very_duplicated/Assembly.fasta
+# python3 dedup.py --read work/test/Pt/pt.all.fastq --assembly work/test/Pt/very_duplicated/Assembly.fasta --save_tmp
 # python dedup.py --read work/test/Pt_small/pt.aln.fastq --assembly work/test/Pt_small/duplicated_asm.fasta
 # python3 dedup.py --read work/test/Pt_small2/ngs.OU59mapped.fastq --assembly work/test/Pt_small2/OU59_asm.fasta
 # python3 dedup.py --read work/test/simple_contained/simulated.fastq --assembly work/test/simple_contained/assembly.fasta --homozygous_lower_bound 60 --homozygous_upper_bound 100
 # python3 dedup.py --read work/test/multiple_contained/simulated.fastq --assembly work/test/multiple_contained/assembly.fasta --homozygous_lower_bound 60 --homozygous_upper_bound 100
 # python3 dedup.py --read work/test/simple_overlap/simulated.fastq --assembly work/test/simple_overlap/assembly.fasta --homozygous_lower_bound 60 --homozygous_upper_bound 100
 # python3 dedup.py --read work/test/complex_contained/simulated.fastq --assembly work/test/complex_contained/assembly.fasta --homozygous_lower_bound 60 --homozygous_upper_bound 100
+# python3 dedup.py --read work/test/Pt/pt.all.fastq --assembly work/test/trouble_32_76/asm.fasta --save_tmp
 
 import sys 
 import mmap
@@ -69,7 +70,7 @@ class Deduplicator():
         '''
         homo_dup_bam = self.analyze_kmers()
 
-        candidate_pairs = self.find_pairs()
+        candidate_pairs = self.find_candidate_pairs()
 
         self_alignment = self.self_alignment()
 
@@ -168,7 +169,7 @@ class Deduplicator():
         # alignment_df_neg = self_alignment[(self_alignment["strand"] == "+")]
 
 
-    def find_pairs(self, containment_threshold=0.2):
+    def find_candidate_pairs(self, containment_threshold=0.2):
         """
         containment_threshold: % of kmers that need to be duplicated to qualify match
         """
@@ -248,7 +249,9 @@ class Deduplicator():
 
             # print(contig)
             contig.calculate_dnd_ratio()
-            # contig.plot_dnd_ratio()
+
+            if contig.name in ["6", "34", "30", "12", "76", "32"]:
+                contig.plot_dnd_ratio()
             # contig.get_kmers(homo_dup_bam)
             if contig.name in kmers_by_contig.keys():
                 contig.homo_dup_kmers = kmers_by_contig[contig.name]
