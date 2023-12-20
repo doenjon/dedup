@@ -1,28 +1,54 @@
-import numpy as np
-import os
-import plotly.express as px
-import subprocess
 import logging
+import os
+import subprocess
+
+import numpy as np
+import plotly.express as px
 
 
 class Contig():
+    """
+    Represents a contig with its name, sequence, and other attributes.
+    """
     
     def __init__(self, name, sequence):
-        self.name = name
-        self.sequence = sequence
+            """
+            Initialize a Contig object.
 
-        self.homo_dup_depth = []
-        self.homo_non_dup_depth = []
-    
-        self.homo_dup_kmers = []
-        self.dnd_ratio = []
+            Args:
+                name (str): The name of the contig.
+                sequence (str): The sequence of the contig.
 
-        self.duplicated = []
+            Attributes:
+                name (str): The name of the contig.
+                sequence (str): The sequence of the contig.
+                homo_dup_depth (list): List to store the depths of homozygous duplicated contigs.
+                homo_non_dup_depth (list): List to store the depths of homozygous non-duplicated contigs.
+                homo_dup_kmers (list): List to store the k-mers of homozygous duplicated contigs.
+                dnd_ratio (list): List to store the duplication/non-duplication ratio of contigs.
+                duplicated (list): List to store the duplicated status of contigs.
+            """
+            self.name = name
+            self.sequence = sequence
+
+            self.homo_dup_depth = []
+            self.homo_non_dup_depth = []
+        
+            self.homo_dup_kmers = []
+            self.dnd_ratio = []
+
+            self.duplicated = []
 
     def calculate_dnd_ratio(self):
+        """
+        Calculates the DND (Duplicated Non-Duplicated) ratio for each position in the sequence.
+        The DND ratio represents the percentage of homozygous kmers that are duplicated, normalized to the range [-1, 1].
 
+        Returns:
+            None
+        """
         for pos in range(len(self.homo_dup_depth)):
-            # no homozygous kmers in this position
+            # if no homozygous kmers in this position
             if self.homo_dup_depth[pos] == 0 and self.homo_non_dup_depth[pos] == 0:
                 self.dnd_ratio.append(0) # TODO: find a better way to handle no data
             else:
@@ -30,35 +56,40 @@ class Contig():
                 dnd = self.homo_dup_depth[pos] / (self.homo_dup_depth[pos] + self.homo_non_dup_depth[pos])
                 # normalize to [-1,1]
                 dnd = 2*dnd - 1
-                self.dnd_ratio.append(dnd)    
+                self.dnd_ratio.append(dnd)
     
-    def plot_dnd_ratio(self):
+    def plot_dnd_ratio(self, window=1000):
+            """
+            Plots the moving average of the dnd_ratio and saves the plot as an image and HTML file.
 
-        def moving_average(data, window_size):
-            return np.convolve(data, np.ones(window_size) / window_size, mode='valid')
-       
-        moving_ave = moving_average(self.dnd_ratio, 1000)
-        # print(self.dnd_ratio)
-        # print(moving_ave)
-        pos = [i for i in range(0, len(moving_ave))]
+            Args:
+                window (int): The size of the moving average window.
 
-        if not os.path.exists("results"):
-            os.makedirs("results")
-            
-        fig = px.scatter(x=pos, y=moving_ave, labels={'x': 'Position', 'y': '% duplicated kmers'})
-        fig.write_image(f'results/{self.name}_dnd_ratio.png')
-        fig.write_html(f'results/{self.name}_dnd_ratio.html')
+            Returns:
+                None
+            """
+            def moving_average(data, window_size):
+                return np.convolve(data, np.ones(window_size) / window_size, mode='valid')
+           
+            moving_ave = moving_average(self.dnd_ratio, window)
+            pos = [i for i in range(0, len(moving_ave))]
 
-
-        # pos = [i for i in range(0, len(self.dnd_ratio))]
-
-        # fig = px.scatter(x=pos, y=self.dnd_ratio, labels={'x': 'Position', 'y': '% duplicated kmers'})
-        # fig.write_image(f'results/{self.name}_dnd_ratio.png')
-        # fig.write_html(f'results/{self.name}_dnd_ratio.html')
+            if not os.path.exists("results"):
+                os.makedirs("results")
+                
+            fig = px.scatter(x=pos, y=moving_ave, labels={'x': 'Position', 'y': '% duplicated kmers'})
+            fig.write_image(f'results/{self.name}_dnd_ratio.png')
+            fig.write_html(f'results/{self.name}_dnd_ratio.html')
 
     def get_kmers(self, bam):
         """
-        get kmers from a bam file
+        Get kmers from a bam file.
+
+        Args:
+            bam (str): Path to the bam file.
+
+        Returns:
+            None
         """
         logging.info(f"reading bam: {bam} for kmers to {self.name}")
         cmd = f"samtools view {bam} -@ 8 '{self.name}'"  
@@ -71,51 +102,40 @@ class Contig():
             if not line:
                 break
 
-            # print("test:", line.decode('UTF-8'))
             line = line.decode('UTF-8').strip().split()
             self.homo_dup_kmers.append(line[0])
 
-    def get_duplicated_sequence(self):
-        pass
-        # if not self.duplicated:
-        #     return None
-        # else:
-        #     # If completely duplicated
-        #     if self.duplicated[1] - self.duplicated[0] == len(self.sequence):
-        #         return f">{self.name}\n{self.sequence}\n"
-            
-        #     # If 5' duplicated
-        #     elif 0 in self.duplicated[0]:
-        #         return f">{self.name}\n{self.sequence[0:self.duplicated[0]]}\n"
-            
-        #     # If 3' duplicated
-        #     else :
-        #         return f">{self.name}\n{self.sequence[self.duplicated[1]:]}\n"
-
     def get_non_duplicated_sequence(self):
+            """
+            Returns the non-duplicated sequence based on the presence of duplicated intervals.
 
-        print(self.duplicated)
-        if not self.duplicated:
-            return f">{self.name}\n{self.sequence}"
-        else:
-            # If completely duplicated
-            for interval in self.duplicated:
-                if interval[1] - interval[0] == len(self.sequence):
-                    return ""
-            
-            # If 5' duplicated
-            for interval in self.duplicated:
-                if 0 in interval:
-                    return f"{self.name}\n{self.sequence[interval[1]:]}\n"
+            If the sequence is not duplicated, it returns the sequence as is.
+            If the sequence is completely duplicated, it returns an empty string.
+            If the sequence is 5' duplicated, it returns the sequence starting from the end of the duplication interval.
+            If the sequence is 3' duplicated, it returns the sequence up to the start of the duplication interval.
+
+            Returns:
+                str: The non-duplicated sequence.
+            """
+            logging.debug(f"{self.name} duplicated on {self.duplicated}")
            
-            # If 3' duplicated
-            for interval in self.duplicated:
-                if len(self.sequence) in interval:
-                # if inverval[1] == len(self.sequence):
-                    return f"{self.name}\n{self.sequence[0:interval[0]]}\n"
-
-    # def __str__(self):
-    #     return f"contig: {self.name}"
+            if not self.duplicated:
+                return f">{self.name}\n{self.sequence}"
+            else:
+                # If completely duplicated
+                for interval in self.duplicated:
+                    if interval[1] - interval[0] == len(self.sequence):
+                        return ""
+                
+                # If 5' duplicated
+                for interval in self.duplicated:
+                    if 0 in interval:
+                        return f"{self.name}\n{self.sequence[interval[1]:]}\n"
+               
+                # If 3' duplicated
+                for interval in self.duplicated:
+                    if len(self.sequence) in interval:
+                        return f"{self.name}\n{self.sequence[0:interval[0]]}\n"
     
     def __repr__(self):
         return f"contig: {self.name} ({len(self.sequence)})"

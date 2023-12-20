@@ -1,186 +1,202 @@
 
-# python3 dedup.py --read work/test/Pt/pt.all.fastq --assembly work/test/Pt/very_duplicated/Assembly.fasta --save_tmp
-# python dedup.py --read work/test/Pt_small/pt.aln.fastq --assembly work/test/Pt_small/duplicated_asm.fasta
-# python3 dedup.py --read work/test/Pt_small2/ngs.OU59mapped.fastq --assembly work/test/Pt_small2/OU59_asm.fasta
-# python3 dedup.py --read work/test/simple_contained/simulated.fastq --assembly work/test/simple_contained/assembly.fasta --homozygous_lower_bound 60 --homozygous_upper_bound 100
-# python3 dedup.py --read work/test/multiple_contained/simulated.fastq --assembly work/test/multiple_contained/assembly.fasta --homozygous_lower_bound 60 --homozygous_upper_bound 100
-# python3 dedup.py --read work/test/simple_overlap/simulated.fastq --assembly work/test/simple_overlap/assembly.fasta --homozygous_lower_bound 60 --homozygous_upper_bound 100
-# python3 dedup.py --read work/test/complex_contained/simulated.fastq --assembly work/test/complex_contained/assembly.fasta --homozygous_lower_bound 60 --homozygous_upper_bound 100
-# python3 dedup.py --read work/test/Pt/pt.all.fastq --assembly work/test/trouble_32_76/asm.fasta --save_tmp
-
-import sys 
-import mmap
-import time
 import os
+import time
+import mmap
+import shutil
 import logging
 import argparse
 import datetime
 import subprocess
+from subprocess import run
+
+import pandas as pd
+import numpy as np
+from statistics import mean
+
 from Bio import SeqIO
 import plotly.express as px
-from subprocess import run
-import pandas as pd
-from statistics import mean
-import numpy as np
-import shutil
 
 from contig import Contig
 from alignment import Alignment
 
-pd.set_option('display.max_rows', 100)
-pd.set_option('display.max_columns', 20)
-
-# align
-# bwa aln -t 8 -N -n 0 -o 0 -k 0 -l 21 test/Pt/pt.fasta .tmp/homozygous_duplicated.fasta > homo.sam
-# convert
-# bwa samse -n 1000 test/Pt/pt.fasta homo.sam .tmp/homozygous_duplicated.fasta > homo.2.sam
-# samtools view -bH homo.2.sam > homo.2.bam
-# sort
-
+# Set logging
 logging.basicConfig(level=logging.INFO)
 
 class Deduplicator():
+    
+    """
+    Class for deduplicating contigs based on k-mer frequency.
+
+    Attributes:
+        assembly (str): Path to the assembly file.
+        reads (str): Path to the reads file.
+        params (object): Object containing parameters (sloppy).
+
+    Methods:
+        __init__(self, assembly, reads, params): Initializes the Deduplicator object.
+        dedup(self): Runs the deduplication pipeline.
+        dedup_pair(self, contig1, contig2, self_alignment): Determine how a pair of contigs should be deduplicated.
+        find_candidate_pairs(self, containment_threshold): Finds candidate pairs of contigs for deduplication.
+        analyze_kmers(self): Analyzes the k-mers in the assembly or reads.
+        get_kmers_by_contig(self, bam): Returns a dictionary of kmers contained in each contig.
+        make_kmer_db(self, fasta, db_name, kmer_size): Runs k-mer counting on a genome or read set.
+    """
 
     def __init__(self, assembly, reads, params):
-    
-        self.assembly = assembly
-        self.contigs = self.get_contigs_from_assembly()
-        self.reads = reads
+            """
+            Initialize the Deduplication object.
 
-        self.kmer_size = params.kmer_size
+            Args:
+                assembly (str): Path to the assembly file.
+                reads (list): List of reads.
+                params (object): Parameters object containing various parameters.
 
-        # TODO: automatically infer upper and lower bounds
-        self.homozygous_lower_bound = params.homozygous_lower_bound
-        self.homozygous_upper_bound = params.homozygous_upper_bound
+            Attributes:
+                assembly (str): Path to the assembly file.
+                contigs (list): List of contigs extracted from the assembly.
+                reads (list): List of reads.
+                kmer_size (int): Size of the k-mer.
+                homozygous_lower_bound (int): Lower bound for homozygous regions.
+                homozygous_upper_bound (int): Upper bound for homozygous regions.
+                tmp_dir (str): Temporary directory for storing intermediate files.
+            """
+        
+            self.assembly = assembly
+            self.contigs = self.get_contigs_from_assembly()
+            self.reads = reads
 
-        # TODO change to TemporaryDirectory
-        self.tmp_dir = ".tmp"
-        if not params.save_tmp and os.path.exists(self.tmp_dir):
-            shutil.rmtree(self.tmp_dir)
-        # TODO: clean up tmp after successful run
-        if not os.path.exists(self.tmp_dir):
-            os.makedirs(self.tmp_dir)
+            self.kmer_size = params.kmer_size
 
+            # Deduplication parameters
+            self.full_duplication_threshold = 0.9
+            self.end_buffer = 50000 # If deduplication is this close to an edge, deduplicate to the edge 
 
-            
+            # TODO: automatically infer upper and lower bounds
+            self.homozygous_lower_bound = params.homozygous_lower_bound
+            self.homozygous_upper_bound = params.homozygous_upper_bound
+
+            # TODO change to TemporaryDirectory
+            self.tmp_dir = ".tmp"
+            if not params.save_tmp and os.path.exists(self.tmp_dir):
+                shutil.rmtree(self.tmp_dir)
+            # TODO: clean up tmp after successful run
+            if not os.path.exists(self.tmp_dir):
+                os.makedirs(self.tmp_dir)
+
 
     def dedup(self):
-        '''
-        Run the deduplication pipeline
-        '''
-        homo_dup_bam = self.analyze_kmers()
+            '''
+            Run the deduplication pipeline
 
-        candidate_pairs = self.find_candidate_pairs()
+            This method performs the deduplication pipeline, which includes analyzing kmers,
+            finding candidate pairs, performing self-alignment, deduplicating pairs, and
+            writing the deduplicated contigs to a file.
+            '''
+            homo_dup_bam = self.analyze_kmers()
 
-        self_alignment = self.self_alignment()
+            candidate_pairs = self.find_candidate_pairs()
 
-        print(f"candidate_pairs: {candidate_pairs}")
+            self_alignment = self.self_alignment()
 
-        for contig1, contig2 in candidate_pairs:
-            self.dedup_pair(contig1, contig2, self_alignment)
+            print(f"candidate_pairs: {candidate_pairs}")
 
-        for contig in self.contigs:
-            print(f"Deduplication interval: {contig.name}: {contig.duplicated}")
+            for contig1, contig2 in candidate_pairs:
+                self.dedup_pair(contig1, contig2, self_alignment)
 
-        with open(f"deduplicated_contigs.fasta", "w") as file:
-            for c in self.contigs:
-                file.write(c.get_non_duplicated_sequence())
+            for contig in self.contigs:
+                print(f"Deduplication interval: {contig.name}: {contig.duplicated}")
+
+            with open(f"deduplicated_contigs.fasta", "w") as file:
+                for c in self.contigs:
+                    file.write(c.get_non_duplicated_sequence())
 
     def dedup_pair(self, contig1, contig2, self_alignment):
-        """
-        Analyse the alignment and duplication between two contigs, 
-        if they can be deduplicated, mark appropriate regions for deduplication
+            """
+            Analyse the alignment and duplication between two contigs, 
+            if they can be deduplicated, mark appropriate regions for deduplication
 
-        contig1 is query
-        contig2 is target
-        """
+            Args:
+                contig1 (Contig): The query contig.
+                contig2 (Contig): The target contig.
+                self_alignment (DataFrame): The alignment dataframe.
 
-        alignment_df = self_alignment[(self_alignment["qname"] == contig1.name) & (self_alignment["tname"] == contig2.name)]
-        if not alignment_df.empty:
-            # print(alignment_df)
-            alignment_df.to_csv("alignment.paf", sep="\t", header=False, index=False)
+            Returns:
+                None
 
-        best_alignment = Alignment(contig1, contig2, alignment_df).find_best_alignment()
+            Raises:
+                None
+            """
 
-        if best_alignment is None:
-            print("no alignment found -- have not handled this")
-            return
+            # Get the alignments for the two contigs
+            alignment_df = self_alignment[(self_alignment["qname"] == contig1.name) & (self_alignment["tname"] == contig2.name)]
 
-        contig1_percent_duplicated = (best_alignment["qend"] - best_alignment["qstart"]) / len(contig1.sequence)
-        contig2_percent_duplicated = (best_alignment["tend"] - best_alignment["tstart"]) / len(contig2.sequence)
-        print("--------------------------------------------------------------------------------")
+            # Calculate the best alignment
+            best_alignment = Alignment(contig1, contig2, alignment_df).find_best_alignment()
 
-        print(f"{contig1} is {100*contig1_percent_duplicated:.2f}% duplicated")
-        print(f"{contig2} is {100*contig2_percent_duplicated:.2f}% duplicated")
-        print(best_alignment)
-        full_duplication_threshold = 0.9
+            # If there is no alignment, quit
+            if best_alignment is None:
+                print("no alignment found -- have not handled this")
+                return
 
-        contig1_dnd = mean(contig1.dnd_ratio[best_alignment['qstart']:best_alignment['qend']]) 
-        contig2_dnd = mean(contig2.dnd_ratio[best_alignment['tstart']:best_alignment['tend']])
+            # Find the contig that is more duplicated 
+            contig1_percent_duplicated = (best_alignment["qend"] - best_alignment["qstart"]) / len(contig1.sequence)
+            contig2_percent_duplicated = (best_alignment["tend"] - best_alignment["tstart"]) / len(contig2.sequence)
+            
+            logging.debug("--------------------------------------------------------------------------------")
+            logging.debug(f"{contig1} is {100*contig1_percent_duplicated:.2f}% duplicated")
+            logging.debug(f"{contig2} is {100*contig2_percent_duplicated:.2f}% duplicated")
+            logging.debug(best_alignment)
+            
+            contig1_dnd = mean(contig1.dnd_ratio[best_alignment['qstart']:best_alignment['qend']]) 
+            contig2_dnd = mean(contig2.dnd_ratio[best_alignment['tstart']:best_alignment['tend']])
 
-        # Contig 1 has more duplicated kmers
-        # elif contig1_dnd > contig2_dnd:
-        if contig1_percent_duplicated > contig2_percent_duplicated:
-            print(f"do deduplication on {contig1}")
-            if contig1_percent_duplicated > full_duplication_threshold:
-                print(f"do full deduplication on : {contig1}")
-                contig1.duplicated = [(0, len(contig1.sequence))]
+            # Get the contig to deduplicate, along with the start and end of the duplicated region
+            contig_to_deduplicate = None
+            if contig1_percent_duplicated > contig2_percent_duplicated:
+                contig_to_deduplicate = contig1
+                contig_percent_duplicated = contig1_percent_duplicated
+                start = best_alignment['qstart']
+                end = best_alignment['qend']
             else:
-                print(f"do partial deduplication on {contig1}")
+                contig_to_deduplicate = contig2
+                contig_percent_duplicated = contig2_percent_duplicated
+                start = best_alignment['tstart']
+                end = best_alignment['tend']
 
-                end_buffer = 50000
-                print(f"min_idx: {best_alignment['qstart']}\nmax_idx: {best_alignment['qend']}")
+            # If over threshold, deduplicate the whole contig
+            if contig1_percent_duplicated > self.full_duplication_threshold:
+                contig_to_deduplicate.duplicated = [(0, len(contig_to_deduplicate.sequence))]
 
-                if best_alignment["qstart"] < end_buffer:
-                    print(f"do deduplication on start of {contig1}")
-                    contig1.duplicated.append((0, best_alignment['qend']))
-                elif best_alignment["qend"] > len(contig1.sequence) - end_buffer:
-                    print(f"do deduplication on end of {contig1}")
-                    contig1.duplicated.append((best_alignment['qstart'], len(contig1.sequence)))
-                else:
-                    print(f"What to deduplicate, but can't figure out where...")
-        
-        # Contig 2 has more duplicated kmers
-        else:
-            print(f"do deduplication on {contig2}")
-            if contig2_percent_duplicated > full_duplication_threshold:
-                print(f"do full deduplication on {contig2}")
-                contig2.duplicated = [(0, len(contig2.sequence))]
-
+            # If not over threshold, but close to an edge, deduplicate to the edge
             else:
-                print(f"do partial deduplication on {contig2}")  
-                print(f"min_idx: {best_alignment['tstart']}\nmax_idx: {best_alignment['tend']}")
-                end_buffer = 20000
-                if best_alignment["tstart"] < end_buffer:
-                    print(f"do deduplication on start of {contig2}")
-                    contig2.duplicated.append((0, best_alignment["tend"]))
-                elif best_alignment["tend"] > len(contig2.sequence) - end_buffer:
-                    print(f"do deduplication on end of {contig2}")
-                    contig2.duplicated.append((best_alignment["tstart"], len(contig2.sequence)))
+                if start < self.end_buffer:
+                    contig_to_deduplicate.duplicated.append((0, end))
+                elif end > len(contig_to_deduplicate.sequence) - self.end_buffer:
+                    contig_to_deduplicate.duplicated.append((start, len(contig_to_deduplicate.sequence)))
                 else:
-                    print(f"What to deduplicate, but can't figure out where...")
-
-         # try alignment forward
-        # alignment_df_pos = alignment_df[(alignment_df["strand"] == "+")]
-        # print(alignment_df_pos)
-
-
-        # # try alignment backwards
-        # alignment_df_neg = self_alignment[(self_alignment["strand"] == "+")]
+                    logging.info(f"What to deduplicate {contig_to_deduplicate}, but can't figure out how")
 
 
     def find_candidate_pairs(self, containment_threshold=0.2):
         """
-        containment_threshold: % of kmers that need to be duplicated to qualify match
-        """
+        Find candidate pairs of contigs that potentially contain duplicates.
 
+        Args:
+            containment_threshold (float): The percentage of k-mers that need to be duplicated
+                to qualify as a match. Defaults to 0.2.
+
+        Returns:
+            list: A list of candidate deduplication pairs, where each pair is a tuple of two contigs.
+        """
         candidate_dedup_pairs = []
         for c1, contig1 in enumerate(self.contigs):
             for c2, contig2 in enumerate(self.contigs):
-                if c2 > c1: 
+                if c2 > c1: # Don't need to check pairs that have already been checked
 
+                    # number of kmers in common
                     common_kmers = len(set(contig1.homo_dup_kmers) & set(contig2.homo_dup_kmers)) 
 
+                    # Calculate percent of common kmers that are in a contig's list of duplicated kmers
                     if len(contig1.homo_dup_kmers) > 0:
                         c1_containment = common_kmers / len(contig1.homo_dup_kmers)
                     else:
@@ -198,61 +214,54 @@ class Deduplicator():
 
                         candidate_dedup_pairs.append((contig1, contig2))
 
-                    # elif c2_containment > containment_threshold and c2_containment > c1_containment:
-                    #     candidate_dedup_pairs.append((contig2, contig1))
-
         return candidate_dedup_pairs
 
 
     def analyze_kmers(self):
+        """
+        Analyzes kmers in the reads and assembly sequences. Provides annotations to contigs
+        about their duplciated kmers
 
+        Returns:
+            str: The filepath of the BAM file containing the mapped homozygous duplicated kmers.
+        """
         # Count kmers
         read_kmer_db = self.make_kmer_db(self.reads, "reads")
         assembly_kmer_db = self.make_kmer_db(self.assembly, "assembly")
 
         # Filter relevant kmers
         non_duplicated_kmers = self.filter_kmer_db(assembly_kmer_db, 1, 1)
-        duplicated_kmers = self.filter_kmer_db(assembly_kmer_db, 2, 4) # allow 2 to 4 copies TODO: generalize                 #TODO: Repeat kmers?
-        # repeat_kmers = self.filter_kmer_db(assembly_kmer_db, 5, 10000)                  #TODO: Repeat kmers?
+        duplicated_kmers = self.filter_kmer_db(assembly_kmer_db, 2, 2) # TODO: generalize to any copy number?
         homozygous_kmers = self.filter_kmer_db(read_kmer_db, self.homozygous_lower_bound, self.homozygous_upper_bound)
-        # heterozygous_kmers = self.filter_kmer_db(read_kmer_db, 15, 30)
 
         print(f"calculating common kmers")
         homozygous_duplicated_kmers = list(set(homozygous_kmers) & set(duplicated_kmers))
         homozygous_non_duplicated_kmers = list(set(homozygous_kmers) & set(non_duplicated_kmers))
 
-        # print(f"homo_duplicated: {len(homozygous_duplicated_kmers)}")
-        # print(f"homo_non_duplicated: {len(homozygous_non_duplicated_kmers)}")
-        # print(f"heterozygou: {len(heterozygous_kmers)}")
-
+        # Write kmers to fasta
         homo_dup_fasta = self.write_kmers(homozygous_duplicated_kmers, "homozygous_duplicated.fasta")
         homo_non_dup_fasta = self.write_kmers(homozygous_non_duplicated_kmers, "homozygous_non_duplicated.fasta")
-        # heterygous_fasta = self.write_kmers(heterozygous_kmers, "heterozygous.fasta")
-        # repeat_fasta = self.write_kmers(repeat_kmers, "repeat.fasta")
-
+      
+        # Find position of kmers in contigs
         homo_dup_bam = self.map_kmers(homo_dup_fasta, "homozygous_duplicated_mapped")
         homo_non_dup_bam = self.map_kmers(homo_non_dup_fasta, "homozygous_non_duplicated_mapped")
-        # het_bam = self.map_kmers(heterygous_fasta, "heterozygous_mapped")
-        # repeat_bam = self.map_kmers(repeat_fasta, "repeat_mapped")
-
+       
+        # Calculate depth of duplicated kmers in contigs
         homo_dup_depths = self.get_kmer_depth(homo_dup_bam)
         homo_non_dup_depths = self.get_kmer_depth(homo_non_dup_bam)
-        # het_depth = self.get_kmer_depth(het_bam)
-        # repeat_depth = self.get_kmer_depth(repeat_bam)
-
+        
+        logging.info("Calculating contig statistics")
+        
+        # Get a map of which kmers are in which contigs
         kmers_by_contig = self.get_kmers_by_contig(homo_dup_bam)
 
-        logging.info("Calculating contig statistics")
+        # Annotate contigs with their kmer information
         for contig in self.contigs:
             contig.homo_dup_depth = homo_dup_depths[contig.name]
             contig.homo_non_dup_depth = homo_non_dup_depths[contig.name]
-
-            # print(contig)
             contig.calculate_dnd_ratio()
+            # contig.plot_dnd_ratio()
 
-            if contig.name in ["6", "34", "30", "12", "76", "32"]:
-                contig.plot_dnd_ratio()
-            # contig.get_kmers(homo_dup_bam)
             if contig.name in kmers_by_contig.keys():
                 contig.homo_dup_kmers = kmers_by_contig[contig.name]
             else:
@@ -261,44 +270,50 @@ class Deduplicator():
         return homo_dup_bam
 
     def get_kmers_by_contig(self, bam):
+            """
+            Return a dictionary of kmers contained in each contig, 
+            as provided in a bam mapping file.
 
-        """
-        return a dictionary of kmers contained in each contig, 
-        as provided in a bam mapping file
-        """
+            Args:
+                bam (str): Path to the bam mapping file.
 
-        logging.info(f"reading bam: {bam} for kmers")
-        cmd = f"samtools view {bam} -@ 8"  
-        logging.info(cmd)
-        
-        proc = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE)
+            Returns:
+                dict: A dictionary where the keys are contig names and the values are lists of kmers.
+            """
 
-        kmers_by_contig = {}
-        while True:
-            line = proc.stdout.readline()
-            if not line:
-                break
+            logging.info(f"reading bam: {bam} for kmers")
+            cmd = f"samtools view {bam} -@ 8"  
+            logging.info(cmd)
+            proc = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE)
 
-            line = line.decode('UTF-8').strip().split()
-            contig_name = line[2]
-            kmer = line[0]
-            try:
-                kmers_by_contig[contig_name].append(kmer)
-            except:
-                kmers_by_contig[contig_name] = [kmer]
-        
-        return kmers_by_contig
+            # Parse alignment file
+            kmers_by_contig = {}
+            while True:
+                line = proc.stdout.readline()
+                if not line:
+                    break
+
+                line = line.decode('UTF-8').strip().split()
+                contig_name = line[2]
+                kmer = line[0]
+                try:
+                    kmers_by_contig[contig_name].append(kmer)
+                except:
+                    kmers_by_contig[contig_name] = [kmer]
+            
+            return kmers_by_contig
 
     def make_kmer_db(self, fasta, db_name, kmer_size=21):
         '''
         Run jellyfish kmer counting on a genome or read set
 
-        input: 
-            fasta: (str) path to fasta file to analyse 
-            kmer_size: (int) size of kmer 
+        Args:
+            fasta (str): Path to the fasta file to analyze
+            db_name (str): Name of the database
+            kmer_size (int, optional): Size of the kmer. Defaults to 21.
 
-        output: 
-            db_path: path to jellyfish count file
+        Returns:
+            str: Path to the jellyfish count file
         '''
         db_path = os.path.join(self.tmp_dir, f"{db_name}.jf")
             
@@ -315,21 +330,24 @@ class Deduplicator():
         return db_path
 
     def self_alignment(self):
+        """
+        Perform self-alignment of the assembly using minimap2.
+
+        Returns:
+            pandas.DataFrame: DataFrame containing the alignment results (paf format)
+        """
 
         alignment_file = os.path.join(self.tmp_dir, "self_alignment.paf")
 
         cmd = f"minimap2 -DP -k19 -w19 -m200 {self.assembly} {self.assembly} > {alignment_file}"
         logging.info(cmd)
         if not os.path.exists(alignment_file):
-            # cmd = f"minimap2 -x asm20 {self.assembly} {self.assembly} > {alignment_file}"
             p = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
             retval = p.wait()
         else:
             print(f"\tSkipping because results already exist")
-       
 
         alignment_df = pd.read_csv(alignment_file, sep='\t', header=None)
-        # alignment_df = alignment_df.iloc[:, :12] # only first 12 columns are relevant
         alignment_df.columns = ["qname", "qlen", "qstart", "qend", "strand", "tname", "tlen", "tstart", "tend", "nmatch", "alen", "mapq", "xtra1", "xtra2", "xtra3", "xtra4", "xtra5"]
         alignment_df["qname"] = alignment_df["qname"].astype(str)
         alignment_df["tname"] = alignment_df["tname"].astype(str)
@@ -340,13 +358,13 @@ class Deduplicator():
         '''
         Run jellyfish dump on kmer database
 
-        input: 
+        Args: 
             kmer_db: (str) path to kmer_db from jellyfish count 
             lower_bound: (int) lower kmer freq (inclusive)
             upper_bound: (int) higher kmer freq (inclusive) 
 
-        output: 
-            kmers: list of kmers
+        Returns: 
+            list: list of kmers
         '''
         out_file = os.path.join(self.tmp_dir, f"jf_dump_{lower_bound}_{upper_bound}")
         cmd = f"jellyfish dump --lower-count {lower_bound} --upper-count {upper_bound} --output {out_file} {kmer_db}"  
@@ -359,7 +377,6 @@ class Deduplicator():
         else:
             print(f"\tSkipping because results already exist")
 
-
         kmers = self.read_kmers_from_fasta(out_file)
 
         return kmers
@@ -369,11 +386,11 @@ class Deduplicator():
         '''
         Read kmers from a fasta file of kmers
 
-        input: 
-            kmer_db: (str) path to kmer fasta file 
-            
-        output: 
-            kmers: list of kmers
+        Args: 
+            kmer_fasta: (str) path to kmer fasta file 
+                
+        Returns: 
+            list: list of kmers
         '''
         print(f"Reading file: {kmer_fasta}")
         kmers = []
@@ -391,6 +408,8 @@ class Deduplicator():
 
         start_time = datetime.datetime.now()
         ln_count2=0
+
+        #use mmap to read the file faster
         with open(kmer_fasta, "r+b") as file:
 
             m = mmap.mmap(file.fileno(), 0, prot=mmap.PROT_READ) #File is open read-only
@@ -406,8 +425,8 @@ class Deduplicator():
                     elapsed = curr_time - start_time
                     pred = elapsed / (ln_count2/(ln_count))
                     remaining_time = str(pred - elapsed)
-                    print(f"{100*ln_count2/(ln_count):.2f}% complete -- Predicted remaining: {remaining_time}", end="\r")
-        # print("\t\t\t\t\t\t\t\t\t", end="\r")
+                    if logging.DEBUG:
+                        print(f"{100*ln_count2/(ln_count):.2f}% complete -- Predicted remaining: {remaining_time}", end="\r")
         return kmers
 
 
@@ -415,9 +434,12 @@ class Deduplicator():
         '''
         Write kmers from a list to a fasta file
 
-        input: 
+        Args: 
             kmers: a list of kmers (str)
             outfile: (Str) a path to an output file
+        
+        Returns:
+            outfile: (str) path to output file
         '''
         # open(outfile).write("".join([f">{k}\n{k}\n" for k in kmers]))
         
@@ -433,26 +455,15 @@ class Deduplicator():
         '''
         map kmers to assembly using bwa aln
 
-        input: 
+        Args: 
             kmer_fasta: fasta of kmers to map (str)
             outname: name of file (str)
+
+        Returns:
+            bam: (str) path to bam file 
         '''
-
-
-        # Aling kmers with bwa
-        # TODO: fix threads
-        # TODO: only make index it if is missing
-        
         basename = os.path.join(self.tmp_dir, f"{outname}")
-        # samfile = os.path.join(self.tmp_dir,f"{outname}.sam")
-        
-        # align reads 
-        # bwa index {self.assembly}
-        # bwa aln -t 8 -N -n 0 -o 0 -k 0 -l {self.kmer_size} {self.assembly} {kmer_fasta} > {os.path.join(self.tmp_dir,f"{outname}.sai")}
-        # convert to sam
-        # bwa samse -n 1000 {self.assembly} {os.path.join(self.tmp_dir,f"{outname}.sai")} {kmer_fasta} > {os.path.join(self.tmp_dir, f"{outname}.sam")}
-        # samtools view -b {os.path.join(self.tmp_dir, f"{outname}.sam")} | samtools sort -@ 8 -m 1G > {os.path.join(self.tmp_dir, f"{outname}.sorted.bam")}
-        
+
         cmd = f'''
         bwa index {self.assembly}
         bwa mem -t 8 -k {self.kmer_size} -T {self.kmer_size} -a -c 500 {self.assembly} {kmer_fasta} > {basename}.sam
@@ -472,19 +483,13 @@ class Deduplicator():
         return f"{basename}.sorted.bam"
         
     def get_contigs_from_assembly(self):
-        '''
-        Read contigs from assembly file
+        """
+        Retrieves contigs from the assembly file.
 
-        returns: 
-        TODO: update
-            contigs: dictionary of contigs in contig_name:sequence format
-        '''
-
+        Returns:
+            list: A list of Contig objects representing the contigs in the assembly.
+        """
         contigs = []
-        # fasta_sequences = SeqIO.parse(open(self.assembly),'fasta')
-        # for f in fasta_sequences:
-        #     print(f)
-        # print(fasta_sequences)
 
         for fasta in SeqIO.parse(open(self.assembly), 'fasta'):
             contig = Contig(fasta.id, fasta.seq)
@@ -493,41 +498,50 @@ class Deduplicator():
         return contigs
 
     def get_kmer_depth(self, bam):
-        '''
-        get the depth of mapped kmers given an aligmnet file
+            '''
+            get the depth of mapped kmers given an alignment file
 
-        input:
-            bam: sorted bam file containing mapped kmers
+            Args:
+                bam (str): sorted bam file containing mapped kmers
 
-        returns: 
-            depth:  dictionary of depth per contig  contig_name:[depth] format
-                    order in depth list is nucleotide order in contig
-                    list will be length contig - len kmer
-        '''
+            Returns: 
+                dict: A dictionary of depth per contig in the format contig_name:[depth].
+                      The order in the depth list is the nucleotide order in the contig.
+                      The list will be of length contig - len(kmer).
 
-        contig_depths = {}
-        outfile = f"{bam}.depth"
-        cmd = f"samtools depth -a {bam} > {outfile}" 
-        print(cmd)
-        p = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT) 
-        retval = p.wait()
-        
-        with open(outfile, "r") as file:
-            for line in file:
-                chrom, pos, depth = line.strip().split()
-                if chrom not in contig_depths.keys():
-                    contig_depths[chrom] = []
-                contig_depths[chrom].append(int(depth))
-        
-        # if contig not in depth file, set to all zeros
-        for contig in self.contigs:
-            if contig.name not in contig_depths.keys():
-                contig_depths[contig.name] = [0] * len(contig.sequence)
-        # print(contig_depths)
-                
-        return contig_depths
+            Raises:
+                FileNotFoundError: If the specified bam file does not exist.
+            '''
+
+            contig_depths = {}
+            outfile = f"{bam}.depth"
+            cmd = f"samtools depth -a {bam} > {outfile}" 
+            print(cmd)
+            p = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT) 
+            retval = p.wait()
+            
+            with open(outfile, "r") as file:
+                for line in file:
+                    chrom, pos, depth = line.strip().split()
+                    if chrom not in contig_depths.keys():
+                        contig_depths[chrom] = []
+                    contig_depths[chrom].append(int(depth))
+            
+            # if contig not in depth file, set to all zeros
+            for contig in self.contigs:
+                if contig.name not in contig_depths.keys():
+                    contig_depths[contig.name] = [0] * len(contig.sequence)
+            # print(contig_depths)
+                    
+            return contig_depths
 
 def parse_args():
+    """
+    Parse command line arguments.
+
+    Returns:
+        args (argparse.Namespace): Parsed command line arguments.
+    """
     parser = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
