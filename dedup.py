@@ -9,9 +9,14 @@ import datetime
 import subprocess
 from subprocess import run
 
+
 import pandas as pd
 import numpy as np
+import seaborn as sns
 from statistics import mean
+from scipy.optimize import curve_fit
+import matplotlib.pyplot as plt
+
 
 from Bio import SeqIO
 import plotly.express as px
@@ -65,15 +70,19 @@ class Deduplicator():
             self.contigs = self.get_contigs_from_assembly()
             self.reads = reads
 
+            self.threads = params.threads
             self.kmer_size = params.kmer_size
 
             # Deduplication parameters
             self.full_duplication_threshold = 0.9
             self.end_buffer = 50000 # If deduplication is this close to an edge, deduplicate to the edge 
 
-            # TODO: automatically infer upper and lower bounds
-            self.homozygous_lower_bound = params.homozygous_lower_bound
-            self.homozygous_upper_bound = params.homozygous_upper_bound
+            if params.homozygous_lower_bound and params.homozygous_upper_bound:
+                self.homozygous_lower_bound = params.homozygous_lower_bound
+                self.homozygous_upper_bound = params.homozygous_upper_bound
+            else:
+                self.homozygous_lower_bound = None
+                self.homozygous_upper_bound = None
 
             # TODO change to TemporaryDirectory
             self.tmp_dir = ".tmp"
@@ -92,7 +101,7 @@ class Deduplicator():
             finding candidate pairs, performing self-alignment, deduplicating pairs, and
             writing the deduplicated contigs to a file.
             '''
-            homo_dup_bam = self.analyze_kmers()
+            self.analyze_kmers()
 
             candidate_pairs = self.find_candidate_pairs()
 
@@ -229,6 +238,13 @@ class Deduplicator():
         read_kmer_db = self.make_kmer_db(self.reads, "reads")
         assembly_kmer_db = self.make_kmer_db(self.assembly, "assembly")
 
+        # Calculate homozygous kmer range, if not set by user
+        if not self.homozygous_lower_bound or not self.homozygous_upper_bound:
+            lower_bound, upper_bound = self.get_homozygous_kmer_range(read_kmer_db)
+            self.homozygous_lower_bound = lower_bound
+            self.homozygous_upper_bound = upper_bound
+
+
         # Filter relevant kmers
         non_duplicated_kmers = self.filter_kmer_db(assembly_kmer_db, 1, 1)
         duplicated_kmers = self.filter_kmer_db(assembly_kmer_db, 2, 2) # TODO: generalize to any copy number?
@@ -267,7 +283,6 @@ class Deduplicator():
             else:
                 contig.homo_dup_kmers = []
 
-        return homo_dup_bam
 
     def get_kmers_by_contig(self, bam):
             """
@@ -317,7 +332,7 @@ class Deduplicator():
         '''
         db_path = os.path.join(self.tmp_dir, f"{db_name}.jf")
             
-        cmd = f"jellyfish count -m {kmer_size} -s 100M -t 8 -C {fasta} --output {db_path}"  # TODO: @enhancement add memory opt and bloom filter #TODO: change threading
+        cmd = f"jellyfish count -m {kmer_size} -s 100M -t {self.threads} -C {fasta} --output {db_path}"  # TODO: @enhancement add memory opt and bloom filter #TODO: change threading
         logging.info(cmd)
         
         if not os.path.exists(db_path):
@@ -339,7 +354,7 @@ class Deduplicator():
 
         alignment_file = os.path.join(self.tmp_dir, "self_alignment.paf")
 
-        cmd = f"minimap2 -DP -k19 -w19 -m200 {self.assembly} {self.assembly} > {alignment_file}"
+        cmd = f"minimap2 -t {self.threads} -DP -k19 -w19 -m200 {self.assembly} {self.assembly} > {alignment_file}"
         logging.info(cmd)
         if not os.path.exists(alignment_file):
             p = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
@@ -466,7 +481,7 @@ class Deduplicator():
 
         cmd = f'''
         bwa index {self.assembly}
-        bwa mem -t 8 -k {self.kmer_size} -T {self.kmer_size} -a -c 500 {self.assembly} {kmer_fasta} > {basename}.sam
+        bwa mem -t {self.threads} -k {self.kmer_size} -T {self.kmer_size} -a -c 500 {self.assembly} {kmer_fasta} > {basename}.sam
         samtools view -@ 8 -b {basename}.sam > {basename}.bam
         samtools sort -@ 8 -m 1G {basename}.bam > {basename}.sorted.bam
         samtools index {basename}.sorted.bam
@@ -535,6 +550,126 @@ class Deduplicator():
                     
             return contig_depths
 
+        
+    def get_homozygous_kmer_range(self, kmer_db):
+        '''
+        Get the range of kmer frequencies that are homozygous
+
+        Args:
+            kmer_db (str): path to kmer database
+
+        Returns:
+            tuple: (min, max) kmer frequency
+        '''
+
+        # get kmer histogram
+        kmer_histo_data = self.get_kmer_histogram_data(kmer_db)
+
+        # Fit model to kmer spectrum
+        mean_homo, std_homo = self.fit_kmer_spectrum(kmer_histo_data)
+
+        lower_bound = int(mean_homo - std_homo)
+        upper_bound = int(mean_homo + std_homo)
+        
+        logging.info(f"Set homozygous kmer range to ({lower_bound}, {upper_bound})")
+        return (lower_bound, upper_bound)
+
+    def get_kmer_histogram_data(self, kmer_db):
+        """
+        Retrieves the k-mer histogram data from a given k-mer database.
+
+        Args:
+            kmer_db (str): The path to the k-mer database.
+
+        Returns:
+            list: The k-mer histogram data.
+
+        Raises:
+            FileNotFoundError: If the k-mer histogram file does not exist.
+
+        """
+        histo_file = os.path.join(self.tmp_dir, 'kmer_counts.histo')
+        cmd = f"jellyfish histo {kmer_db} > {histo_file}"  # TODO: @enhancement add memory opt and bloom filter #TODO: change threading
+        logging.info(cmd)
+            
+        if not os.path.exists(histo_file):
+            p = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT) 
+            retval = p.wait()
+            print(f"make_kmer_db ret: {retval}")
+        else:
+            print(f"\tSkipping because results already exist")
+
+        data = []
+        with open(histo_file, 'r') as f:
+            for line in f:
+                x, y = line.strip().split()
+                data.append(int(y))
+
+        # TODO: @enhancement add a cutoff for the histogram, for now, max cov 500
+        data = data[:500]
+
+        # TODO: @enhancement add more sophisticated fitting, for now, min cov ~20
+        for i in range(10):
+            data[i] = 0 
+
+        return data
+
+    def fit_kmer_spectrum(self, data):
+        """
+        Fits a bimodal Gaussian curve to the given data and returns the 
+        mean and standard deviation of the homogeneous peak.
+
+        Parameters:
+            data (array-like): The input data to fit the curve to.
+
+        Returns:
+            tuple: A tuple containing the mean and standard deviation of the homogeneous peak.
+
+        """
+        # Gaussian function
+        def gauss(x,mu,sigma,A):
+            return A/np.sqrt(sigma)*np.exp(-(x-mu)**2/(2.*sigma**2))
+
+        # Mixture of Gaussians
+        def bimodal(x, mu1, sigma1, A1, sigma2, A2):
+            mu2 = 2*mu1
+            return gauss(x, mu1, sigma1, A1) + gauss(x, mu2, sigma2, A2)
+
+        # Get the data
+        x = np.arange(len(data))
+        y = data
+
+        # Get reasonable initial parameters    
+        init_params = (1, 5, 100000, 5, 100000)
+
+        # Fit the curve
+        params, pcov = curve_fit(bimodal, x, y, p0=init_params)
+
+        # Graph the data and fit to check quality
+        sns.set(style="whitegrid")
+        plt.figure(figsize=(12, 6))
+        sns.barplot(x=np.arange(len(data)), y=data, color="skyblue")
+
+        plt.title('Seaborn Plot of Data')
+        plt.xlabel('Index')
+        plt.ylabel('Values')
+
+        # Add the fitted Gaussian curve
+        x_vals = np.linspace(0, len(data), 1000)
+        fitted_curve = bimodal(x_vals, params[0], params[1], params[2], params[3], params[4])
+        plt.plot(x_vals, fitted_curve, color='red', label='Fitted Gaussian Curve')
+
+        plt.legend()
+
+        output_file = 'kmer_spectrum_fit.png'  
+        plt.savefig(output_file)
+        
+        print(params)
+        mean_het, std_het, _, std_homo, _ = params
+        mean_homo = 2*mean_het # enforced in fitting
+
+        return mean_homo, std_homo
+
 def parse_args():
     """
     Parse command line arguments.
@@ -562,15 +697,19 @@ def parse_args():
                         help='genome to deduplicate', 
                         required=False)
 
+    parser.add_argument('--threads', 
+                        type=int, 
+                        default=8,
+                        help='number of threads to use', 
+                        required=False)
+
     parser.add_argument('--homozygous_lower_bound', 
                         type=int, 
-                        default=34,
                         help='<min max> for kmer freuqency of homozygous peak', 
                         required=False)
 
     parser.add_argument('--homozygous_upper_bound', 
                         type=int, 
-                        default=50,
                         help='<min max> for kmer freuqency of homozygous peak', 
                         required=False)
     parser.add_argument('--save_tmp', 
