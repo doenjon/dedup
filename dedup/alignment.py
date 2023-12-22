@@ -4,7 +4,7 @@ import logging
 import pandas as pd
 from statistics import mean
 
-from contig import Contig
+from dedup.contig import Contig
 
 class Alignment:
     """
