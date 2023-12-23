@@ -119,23 +119,31 @@ class Contig():
             """
             logging.debug(f"{self.name} duplicated on {self.duplicated}")
            
+            # TODO handle multiple deduplication intervals
+
             if not self.duplicated:
-                return f">{self.name}\n{self.sequence}"
+                return f">{self.name}\n{self.sequence}\n"
             else:
+
                 # If completely duplicated
                 for interval in self.duplicated:
                     if interval[1] - interval[0] == len(self.sequence):
                         return ""
+
+                # Otherwise, find start and end of non-duplicated sequence
+                # get 5' start
+                start = 0
+                for interval in self.duplicated:
+                    if 0 in interval and interval[1] > start:
+                        start = interval[1]
+
+                end = len(self.sequence)
+                for interval in self.duplicated:
+                    if len(self.sequence) in interval and interval[0] < end:
+                        end = interval[0]
                 
-                # If 5' duplicated
-                for interval in self.duplicated:
-                    if 0 in interval:
-                        return f"{self.name}\n{self.sequence[interval[1]:]}\n"
-               
-                # If 3' duplicated
-                for interval in self.duplicated:
-                    if len(self.sequence) in interval:
-                        return f"{self.name}\n{self.sequence[0:interval[0]]}\n"
+                return f">{self.name}\n{self.sequence[start:end]}\n"
+
     
     def __repr__(self):
         return f"contig: {self.name} ({len(self.sequence)})"

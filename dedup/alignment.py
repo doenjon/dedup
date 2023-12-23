@@ -4,7 +4,10 @@ import logging
 import pandas as pd
 from statistics import mean
 
-from dedup.contig import Contig
+from contig import Contig
+
+logging.basicConfig(level=logging.DEBUG)
+
 
 class Alignment:
     """
@@ -31,6 +34,12 @@ class Alignment:
         self.contig1 = contig1
         self.contig2 = contig2
         self.edges = []
+
+        print(f"Original PAF length: {len(paf_df)}")
+        # Remove overlapping alignments with simplify_paf
+        paf_df = self.simplify_paf(paf_df)
+        print(f"New PAF length: {len(paf_df)}")
+
         self.nodes = self.parse_paf(paf_df)
         self.max_gap = 50000
 
@@ -222,8 +231,35 @@ class Alignment:
                         node1.children.append(edge)
                         node2.parents.append(edge)
                         self.edges.append(edge)
-        
-        
+
+        print(f"Created DAG with {len(self.nodes)} nodes and {len(self.edges)} edges")  
+
+    def simplify_paf(self, paf_df):
+            """
+            Simplifies a PAF DataFrame by removing overlapping alignments. If an alignment is completely contained in 
+            an existing alignment, it is removed
+
+            Parameters:
+            paf_df (pandas.DataFrame): The input PAF DataFrame.
+
+            Returns:
+            pandas.DataFrame: The simplified PAF DataFrame.
+            """
+            indices_to_keep = []
+            for idx, row in paf_df.iterrows():
+                if not any(
+                    (
+                        (row['qstart'] >= paf_df.loc[j, 'qstart']) and (row['qend'] <= paf_df.loc[j, 'qend'])
+                    ) and (
+                        (row['tstart'] >= paf_df.loc[j, 'tstart']) and (row['tend'] <= paf_df.loc[j, 'tend'])
+                    )
+                    for j in indices_to_keep
+                ):
+                    indices_to_keep.append(idx)
+
+            paf_df = paf_df.loc[indices_to_keep]
+            return paf_df
+
 class Node:
     """
     Represents a node in the alignment graph.

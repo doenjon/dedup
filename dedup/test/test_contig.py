@@ -48,27 +48,9 @@ def test_get_kmers(contig, mocker):
     # Assert that the homo_dup_kmers list was updated correctly
     assert contig.homo_dup_kmers == ['AAA', 'TTT']
 
-# # def test_get_kmers(contig, mocker):
-#     # Mock the subprocess.Popen method
-#     mocker.patch('subprocess.Popen')
-
-#     # Set the expected values
-#     bam = "path/to/bam"
-#     contig.name = "name"
-#     contig.homo_dup_kmers = []
-
-#     # Call the get_kmers method
-#     contig.get_kmers(bam)
-
-#     # Assert that the subprocess.Popen method was called with the correct arguments
-#     subprocess.Popen.assert_called_once_with(f"samtools view {bam} -@ 8 'name'", shell=True, stdout=subprocess.PIPE)
-
-#     # Assert that the homo_dup_kmers list was updated correctly
-#     assert contig.homo_dup_kmers == ["line1"]
-
 def test_get_non_duplicated_sequence_no_duplicates(contig):
     contig.duplicated = []
-    expected_result = ">name\nATGC"
+    expected_result = ">name\nATGC\n"
     assert contig.get_non_duplicated_sequence() == expected_result
 
 def test_get_non_duplicated_sequence_completely_duplicated(contig):
@@ -78,10 +60,15 @@ def test_get_non_duplicated_sequence_completely_duplicated(contig):
 
 def test_get_non_duplicated_sequence_5_prime_duplicated(contig):
     contig.duplicated = [(0, 2)]
-    expected_result = "name\nGC\n"
+    expected_result = ">name\nGC\n"
     assert contig.get_non_duplicated_sequence() == expected_result
 
 def test_get_non_duplicated_sequence_3_prime_duplicated(contig):
     contig.duplicated = [(2, 4)]
-    expected_result = "name\nAT\n"
+    expected_result = ">name\nAT\n"
+    assert contig.get_non_duplicated_sequence() == expected_result
+
+def test_get_non_duplicated_sequence_multiple_duplicated(contig):
+    contig.duplicated = [(0, 1), (3, 4)]
+    expected_result = ">name\nTG\n"
     assert contig.get_non_duplicated_sequence() == expected_result

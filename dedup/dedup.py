@@ -9,6 +9,8 @@ import datetime
 import subprocess
 from subprocess import run
 
+import cProfile
+import datetime
 
 import pandas as pd
 import numpy as np
@@ -21,11 +23,13 @@ import matplotlib.pyplot as plt
 from Bio import SeqIO
 import plotly.express as px
 
-from dedup.contig import Contig
-from dedup.alignment import Alignment
+from contig import Contig
+from alignment import Alignment
+import multiprocessing
 
 # Set logging
-logging.basicConfig(level=logging.INFO)
+# logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.DEBUG)
 
 class Deduplicator():
     
@@ -93,31 +97,36 @@ class Deduplicator():
                 os.makedirs(self.tmp_dir)
 
 
+    # ...
+
     def dedup(self):
-            '''
-            Run the deduplication pipeline
+        '''
+        Run the deduplication pipeline
 
-            This method performs the deduplication pipeline, which includes analyzing kmers,
-            finding candidate pairs, performing self-alignment, deduplicating pairs, and
-            writing the deduplicated contigs to a file.
-            '''
-            self.analyze_kmers()
+        This method performs the deduplication pipeline, which includes analyzing kmers,
+        finding candidate pairs, performing self-alignment, deduplicating pairs, and
+        writing the deduplicated contigs to a file.
+        '''
+        self.analyze_kmers()
 
-            candidate_pairs = self.find_candidate_pairs()
+        candidate_pairs = self.find_candidate_pairs()
 
-            self_alignment = self.self_alignment()
+        self_alignment = self.self_alignment()
 
-            print(f"candidate_pairs: {candidate_pairs}")
+        print(f"candidate_pairs: {candidate_pairs}")
 
-            for contig1, contig2 in candidate_pairs:
-                self.dedup_pair(contig1, contig2, self_alignment)
+        # Dedup pairs in parallel
+        pool = multiprocessing.Pool(self.threads)
+        results = pool.starmap(self.dedup_pair, [(contig1, contig2, self_alignment) for contig1, contig2 in candidate_pairs])
+        pool.close()
+        pool.join()
 
-            for contig in self.contigs:
-                print(f"Deduplication interval: {contig.name}: {contig.duplicated}")
+        for contig in self.contigs:
+            print(f"Deduplication interval: {contig.name}: {contig.duplicated}")
 
-            with open(f"deduplicated_contigs.fasta", "w") as file:
-                for c in self.contigs:
-                    file.write(c.get_non_duplicated_sequence())
+        with open(f"deduplicated_contigs.fasta", "w") as file:
+            for c in self.contigs:
+                file.write(c.get_non_duplicated_sequence())
 
     def dedup_pair(self, contig1, contig2, self_alignment):
             """
@@ -152,8 +161,15 @@ class Deduplicator():
             contig2_percent_duplicated = (best_alignment["tend"] - best_alignment["tstart"]) / len(contig2.sequence)
             
             logging.debug("--------------------------------------------------------------------------------")
-            logging.debug(f"{contig1} is {100*contig1_percent_duplicated:.2f}% duplicated")
-            logging.debug(f"{contig2} is {100*contig2_percent_duplicated:.2f}% duplicated")
+            logging.debug(f"{contig1} is {100*contig1_percent_duplicated:.2f}% duplicated by alignment")
+            logging.debug(f"{contig2} is {100*contig2_percent_duplicated:.2f}% duplicated by alignment")
+            c1_homo_dup_aln = contig1.homo_dup_depth[best_alignment["qstart"]:best_alignment["qend"]]
+            c1_homo_non_dup_aln = contig1.homo_non_dup_depth[best_alignment["qstart"]:best_alignment["qend"]]
+            logging.debug(f"{contig1} alignment has {sum(c1_homo_dup_aln)} duplicated and {sum(c1_homo_non_dup_aln)} non duplicated kmers")
+            c2_homo_dup_aln = contig2.homo_dup_depth[best_alignment["tstart"]:best_alignment["tend"]]
+            c2_homo_non_dup_aln = contig2.homo_non_dup_depth[best_alignment["tstart"]:best_alignment["tend"]]
+            logging.debug(f"{contig2} alignment has {sum(c2_homo_dup_aln)} duplicated and {sum(c2_homo_non_dup_aln)} non duplicated kmers")
+            
             logging.debug(best_alignment)
             
             contig1_dnd = mean(contig1.dnd_ratio[best_alignment['qstart']:best_alignment['qend']]) 
@@ -606,7 +622,7 @@ class Deduplicator():
                 data.append(int(y))
 
         # TODO: @enhancement add a cutoff for the histogram, for now, max cov 500
-        data = data[:500]
+        data = data[:200]
 
         # TODO: @enhancement add more sophisticated fitting, for now, min cov ~20
         for i in range(10):
@@ -723,8 +739,19 @@ def parse_args():
 
 if __name__ == "__main__":
 
+    profiler = cProfile.Profile()
+    profiler.enable()
+
     args = parse_args()
 
     dedup = Deduplicator(args.assembly, args.reads, args)
 
     dedup.dedup()
+
+    # Disable the profiler
+    profiler.disable()
+
+    # Print the profiler statistics
+    profiler.print_stats(sort='cumulative')
+
+    
