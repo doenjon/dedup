@@ -34,10 +34,10 @@ class Alignment:
         self.contig2 = contig2
         self.edges = []
 
-        print(f"Original PAF length: {len(paf_df)}")
+        # print(f"Original PAF length: {len(paf_df)}")
         # Remove overlapping alignments with simplify_paf
         paf_df = self.simplify_paf(paf_df)
-        print(f"New PAF length: {len(paf_df)}")
+        # print(f"New PAF length: {len(paf_df)}")
 
         self.nodes = self.parse_paf(paf_df)
         self.max_gap = 25000

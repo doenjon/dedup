@@ -105,7 +105,7 @@ class Contig():
                 break
 
             line = line.decode('UTF-8').strip().split()
-            self.homo_dup_kmers.append(line[0])
+            self.homo_dup_kmers.append(line[0])        
 
     def get_non_duplicated_sequence(self):
             """
@@ -123,12 +123,16 @@ class Contig():
            
             # TODO handle multiple deduplication intervals
 
+            tdk = sum(self.homo_dup_depth) / 21
+            tndk = sum(self.homo_non_dup_depth) / 21
             if not self.duplicated:
+                logging.debug(f"{self.name} -- 0 out of {tdk} kmers duplicated removed. 0 out of {tndk} non_duplicated kmers removed.")
                 return f">{self.name}\n{self.sequence}\n"
             else:
 
                 # If completely duplicated
                 for interval in self.duplicated:
+                    logging.debug(f"{self.name} -- {tdk} out of {tdk} duplicated kmers removed. {tndk} out of {tndk} non_duplicated kmers removed. dnd dedup ratio is {(tdk / (tndk+1)):.2f}")
                     if interval[1] - interval[0] == len(self.sequence):
                         return ""
 
@@ -144,6 +148,10 @@ class Contig():
                     if len(self.sequence) in interval and interval[0] < end:
                         end = interval[0]
                 
+                removed_dup = (sum(self.homo_dup_depth[0:start]) + sum(self.homo_dup_depth[end:])) / 21
+                removed_ndup = (sum(self.homo_non_dup_depth[0:start]) + sum(self.homo_non_dup_depth[end:])) / 21
+                logging.debug(f"{self.name} -- {removed_dup} out of {tdk} duplicated kmers removed ({(100*removed_dup/(tdk+1)):.2f}%). {removed_ndup} out of {tndk} non_duplicated kmers removed({(100*removed_ndup/(tdk+1)):.2f}%). dnd dedup ratio is {(removed_dup / (1+removed_ndup)):.2f}")
+
                 return f">{self.name}\n{self.sequence[start:end]}\n"
 
     

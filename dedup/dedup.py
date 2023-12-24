@@ -31,9 +31,23 @@ from multiprocessing import Pool, Manager
 
 
 # Set logging
-logging.basicConfig(level=logging.INFO)
-
+logging.basicConfig(
+    level=logging.DEBUG,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+)
 logger = logging.getLogger(__name__)
+
+# Create a file handler and set the log level
+file_handler = logging.FileHandler('dedup_log.txt')
+file_handler.setLevel(logging.DEBUG)
+
+# Create a formatter and set it for the file handler
+formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+file_handler.setFormatter(formatter)
+
+# Add the file handler to the logger
+logger = logging.getLogger()
+logger.addHandler(file_handler)
 
 
 class Deduplicator():
@@ -113,39 +127,25 @@ class Deduplicator():
         finding candidate pairs, performing self-alignment, deduplicating pairs, and
         writing the deduplicated contigs to a file.
         '''
+        # Collect kmers stats
         self.analyze_kmers()
 
-        candidate_pairs = self.find_candidate_pairs()
-
+        # Perform whole genome self-alignment
         self_alignment = self.self_alignment()
 
-        print(f"candidate_pairs: {candidate_pairs}")
+        # Find candidate pairs of contigs to deduplicate
+        candidate_pairs = self.find_candidate_pairs()
+
+        logging.debug(f"candidate_pairs: {candidate_pairs}")
 
         # Dedup pairs in parallel
         with Pool(processes=self.threads) as pool:
+            # Results is a list of tuples, where each tuple is (index_of_contig_to_mark_duplication, (start, end))
             results = pool.starmap(self.dedup_pair, [(contig1, contig2, self_alignment) for contig1, contig2 in candidate_pairs])
-        
+
+        # Process the results
         for pair, result in zip(candidate_pairs, results):
-            print(f"pair: {pair} result: {result}")
             pair[result[0]].duplicated.append(result[1])
-
-        
-        # pool = multiprocessing.Pool(processes=self.threads)
-        # results = pool.starmap(self.dedup_pair, [(contig1, contig2, self_alignment) for contig1, contig2 in candidate_pairs])
-        # pool.close()
-        # pool.join()
-
-        # for contig1, contig2 in candidate_pairs:
-        #     self.dedup_pair(contig1, contig2, self_alignment)
-        #     print("after dedup_pair")
-        #     print(f"{contig1}: {contig1.duplicated}")
-        #     print(f"{contig2}: {contig2.duplicated}")
-            
-        #     print(f"contig1: {contig1} is in contigs: {contig1 in self.contigs}")
-        #     print(f"contig2: {contig2} is in contigs: {contig1 in self.contigs}")
-
-        for contig in self.contigs:
-            print(f"Deduplication interval: {contig.name}: {contig.duplicated}")
 
         with open(f"deduplicated_contigs.fasta", "w") as file:
             for c in self.contigs:
@@ -211,49 +211,38 @@ class Deduplicator():
             contig_to_deduplicate = None
             deduplicate_idx = -1
             if contig1_percent_duplicated > contig2_percent_duplicated:
-                print(f"Deduplicating {contig1}")
                 contig_to_deduplicate = contig1
                 contig_percent_duplicated = contig1_percent_duplicated
                 start = best_alignment['qstart']
                 end = best_alignment['qend']
                 deduplicate_idx = 0
             else:
-                print(f"Deduplicating {contig2}")
                 contig_to_deduplicate = contig2
                 contig_percent_duplicated = contig2_percent_duplicated
                 start = best_alignment['tstart']
                 end = best_alignment['tend']
                 deduplicate_idx = 1
 
-
-            print(contig_to_deduplicate == contig1)
-            print(contig_to_deduplicate == contig2)
-            print(id(contig_to_deduplicate) == id(contig1))
-            print(id(contig_to_deduplicate) == id(contig2))
             # If over threshold, deduplicate the whole contig
             if contig_percent_duplicated > self.full_duplication_threshold:
                 print("Deduplicating whole contig")
-                contig_to_deduplicate.duplicated.append((0, len(contig_to_deduplicate.sequence)))
+                # contig_to_deduplicate.duplicated.append((0, len(contig_to_deduplicate.sequence)))
                 return (deduplicate_idx, (0, len(contig_to_deduplicate.sequence)))
             # If not over threshold, but close to an edge, deduplicate to the edge
             else:
                 if start < self.end_buffer:
                     print("Deduplicating start of contig")
-                    contig_to_deduplicate.duplicated.append((0, end))
+                    # contig_to_deduplicate.duplicated.append((0, end))
                     return (deduplicate_idx, (0, end))
-                    print(contig_to_deduplicate.duplicated)
+                    # print(contig_to_deduplicate.duplicated)
                 elif end > len(contig_to_deduplicate.sequence) - self.end_buffer:
                     print("Deduplicating end of contig")
                     return (deduplicate_idx, (start, len(contig_to_deduplicate.sequence)))
-                    contig_to_deduplicate.duplicated.append((start, len(contig_to_deduplicate.sequence)))
-                    print(contig_to_deduplicate.duplicated)
+                    # contig_to_deduplicate.duplicated.append((start, len(contig_to_deduplicate.sequence)))
+                    # print(contig_to_deduplicate.duplicated)
 
                 else:
                     logging.info(f"What to deduplicate {contig_to_deduplicate}, but can't figure out how")
-
-            print(contig_to_deduplicate.duplicated)
-            print(contig1.duplicated)
-            print(contig2.duplicated) 
 
     def find_candidate_pairs(self, containment_threshold=0.2):
         """
@@ -266,19 +255,6 @@ class Deduplicator():
         Returns:
             list: A list of candidate deduplication pairs, where each pair is a tuple of two contigs.
         """
-        # candidate_pairs = []
-        # candidate_dedup_pairs = []
-        # with multiprocessing.Pool(processes=self.threads) as pool:
-        #     for c1, contig1 in enumerate(self.contigs):
-        #         for c2, contig2 in enumerate(self.contigs):
-        #             if c2 > c1: # Don't need to check pairs that have already been checked
-        #                 pool.apply_async(self.process_candidate_pairs, args=(contig1, contig2, containment_threshold)).get()
-        #                 candidate_pairs.append((contig1, contig2))
-                        
-        # pool.close()
-        # pool.join()
-
-        # return candidate_dedup_pairs
 
         contig_pairs = [
             (contig1, contig2)
@@ -287,19 +263,18 @@ class Deduplicator():
             if c2 > c1
         ]
 
-        print(contig_pairs)
-
         with Pool(processes=self.threads) as pool:
             results = pool.starmap(self.process_candidate_pair, contig_pairs)
 
         # Process the results
         candidate_dedup_pairs = []
         for pair, result in zip(contig_pairs, results):
-            print(f"pair: {pair} result: {result}")
+            # print(f"pair: {pair} result: {result}")
             if result:
                 candidate_dedup_pairs.append(pair)
 
         return candidate_dedup_pairs
+        
 
     def process_candidate_pair(self, contig1, contig2, containment_threshold=0.2):
         """
