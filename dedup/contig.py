@@ -11,6 +11,7 @@ class Contig():
     Represents a contig with its name, sequence, and other attributes.
     """
     
+    
     def __init__(self, name, sequence):
             """
             Initialize a Contig object.

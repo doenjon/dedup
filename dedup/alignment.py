@@ -34,6 +34,7 @@ class Alignment:
         self.nodes = self.parse_paf(paf_df)
         self.max_gap = 50000
 
+
     def find_best_alignment(self):
         """
         Finds the best alignment in the alignment graph.

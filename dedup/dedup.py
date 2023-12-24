@@ -271,6 +271,7 @@ class Deduplicator():
         # Get a map of which kmers are in which contigs
         kmers_by_contig = self.get_kmers_by_contig(homo_dup_bam)
 
+
         # Annotate contigs with their kmer information
         for contig in self.contigs:
             contig.homo_dup_depth = homo_dup_depths[contig.name]
