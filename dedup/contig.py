@@ -1,10 +1,12 @@
 import logging
 import os
 import subprocess
+from logging import handlers
 
 import numpy as np
 import plotly.express as px
 
+logger = logging.getLogger(__name__)
 
 class Contig():
     """

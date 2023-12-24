@@ -10,6 +10,7 @@ import subprocess
 from subprocess import run
 
 import cProfile
+import pstats
 import datetime
 
 import pandas as pd
@@ -26,10 +27,14 @@ import plotly.express as px
 from contig import Contig
 from alignment import Alignment
 import multiprocessing
+from multiprocessing import Pool, Manager
+
 
 # Set logging
-# logging.basicConfig(level=logging.INFO)
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.INFO)
+
+logger = logging.getLogger(__name__)
+
 
 class Deduplicator():
     
@@ -78,8 +83,9 @@ class Deduplicator():
             self.kmer_size = params.kmer_size
 
             # Deduplication parameters
-            self.full_duplication_threshold = 0.9
-            self.end_buffer = 50000 # If deduplication is this close to an edge, deduplicate to the edge 
+            self.full_duplication_threshold = 0.9   # Deduplicate whole contig if contig is this duplicated
+            self.containment_threshold = 0.2        # Fraction of shared kmers to be considered a match
+            self.end_buffer = 25000 # If deduplication is this close to an edge, deduplicate to the edge 
 
             if params.homozygous_lower_bound and params.homozygous_upper_bound:
                 self.homozygous_lower_bound = params.homozygous_lower_bound
@@ -89,7 +95,7 @@ class Deduplicator():
                 self.homozygous_upper_bound = None
 
             # TODO change to TemporaryDirectory
-            self.tmp_dir = ".tmp"
+            self.tmp_dir = ".tmp2"
             if not params.save_tmp and os.path.exists(self.tmp_dir):
                 shutil.rmtree(self.tmp_dir)
             # TODO: clean up tmp after successful run
@@ -116,10 +122,27 @@ class Deduplicator():
         print(f"candidate_pairs: {candidate_pairs}")
 
         # Dedup pairs in parallel
-        pool = multiprocessing.Pool(self.threads)
-        results = pool.starmap(self.dedup_pair, [(contig1, contig2, self_alignment) for contig1, contig2 in candidate_pairs])
-        pool.close()
-        pool.join()
+        with Pool(processes=self.threads) as pool:
+            results = pool.starmap(self.dedup_pair, [(contig1, contig2, self_alignment) for contig1, contig2 in candidate_pairs])
+        
+        for pair, result in zip(candidate_pairs, results):
+            print(f"pair: {pair} result: {result}")
+            pair[result[0]].duplicated.append(result[1])
+
+        
+        # pool = multiprocessing.Pool(processes=self.threads)
+        # results = pool.starmap(self.dedup_pair, [(contig1, contig2, self_alignment) for contig1, contig2 in candidate_pairs])
+        # pool.close()
+        # pool.join()
+
+        # for contig1, contig2 in candidate_pairs:
+        #     self.dedup_pair(contig1, contig2, self_alignment)
+        #     print("after dedup_pair")
+        #     print(f"{contig1}: {contig1.duplicated}")
+        #     print(f"{contig2}: {contig2.duplicated}")
+            
+        #     print(f"contig1: {contig1} is in contigs: {contig1 in self.contigs}")
+        #     print(f"contig2: {contig2} is in contigs: {contig1 in self.contigs}")
 
         for contig in self.contigs:
             print(f"Deduplication interval: {contig.name}: {contig.duplicated}")
@@ -163,12 +186,21 @@ class Deduplicator():
             logging.debug("--------------------------------------------------------------------------------")
             logging.debug(f"{contig1} is {100*contig1_percent_duplicated:.2f}% duplicated by alignment")
             logging.debug(f"{contig2} is {100*contig2_percent_duplicated:.2f}% duplicated by alignment")
+           
+           
             c1_homo_dup_aln = contig1.homo_dup_depth[best_alignment["qstart"]:best_alignment["qend"]]
+            c1_homo_dup_tot = contig1.homo_dup_depth[:]
             c1_homo_non_dup_aln = contig1.homo_non_dup_depth[best_alignment["qstart"]:best_alignment["qend"]]
-            logging.debug(f"{contig1} alignment has {sum(c1_homo_dup_aln)} duplicated and {sum(c1_homo_non_dup_aln)} non duplicated kmers")
+            c1_homo_non_dup_tot = contig1.homo_non_dup_depth[:]
+            logging.debug(f"{contig1} alignment has {sum(c1_homo_dup_aln)}/{sum(c1_homo_dup_tot)} duplicated and {sum(c1_homo_non_dup_aln)}/{sum(c1_homo_non_dup_tot)} non duplicated kmers")
+            
+            
             c2_homo_dup_aln = contig2.homo_dup_depth[best_alignment["tstart"]:best_alignment["tend"]]
+            c2_homo_dup_tot = contig2.homo_dup_depth[:]
             c2_homo_non_dup_aln = contig2.homo_non_dup_depth[best_alignment["tstart"]:best_alignment["tend"]]
-            logging.debug(f"{contig2} alignment has {sum(c2_homo_dup_aln)} duplicated and {sum(c2_homo_non_dup_aln)} non duplicated kmers")
+            c2_homo_non_dup_tot = contig2.homo_non_dup_depth[:]
+
+            logging.debug(f"{contig2} alignment has {sum(c2_homo_dup_aln)}/{sum(c2_homo_dup_tot)} duplicated and {sum(c2_homo_non_dup_aln)}/{sum(c2_homo_non_dup_tot)} non duplicated kmers")
             
             logging.debug(best_alignment)
             
@@ -177,30 +209,51 @@ class Deduplicator():
 
             # Get the contig to deduplicate, along with the start and end of the duplicated region
             contig_to_deduplicate = None
+            deduplicate_idx = -1
             if contig1_percent_duplicated > contig2_percent_duplicated:
+                print(f"Deduplicating {contig1}")
                 contig_to_deduplicate = contig1
                 contig_percent_duplicated = contig1_percent_duplicated
                 start = best_alignment['qstart']
                 end = best_alignment['qend']
+                deduplicate_idx = 0
             else:
+                print(f"Deduplicating {contig2}")
                 contig_to_deduplicate = contig2
                 contig_percent_duplicated = contig2_percent_duplicated
                 start = best_alignment['tstart']
                 end = best_alignment['tend']
+                deduplicate_idx = 1
 
+
+            print(contig_to_deduplicate == contig1)
+            print(contig_to_deduplicate == contig2)
+            print(id(contig_to_deduplicate) == id(contig1))
+            print(id(contig_to_deduplicate) == id(contig2))
             # If over threshold, deduplicate the whole contig
-            if contig1_percent_duplicated > self.full_duplication_threshold:
-                contig_to_deduplicate.duplicated = [(0, len(contig_to_deduplicate.sequence))]
-
+            if contig_percent_duplicated > self.full_duplication_threshold:
+                print("Deduplicating whole contig")
+                contig_to_deduplicate.duplicated.append((0, len(contig_to_deduplicate.sequence)))
+                return (deduplicate_idx, (0, len(contig_to_deduplicate.sequence)))
             # If not over threshold, but close to an edge, deduplicate to the edge
             else:
                 if start < self.end_buffer:
+                    print("Deduplicating start of contig")
                     contig_to_deduplicate.duplicated.append((0, end))
+                    return (deduplicate_idx, (0, end))
+                    print(contig_to_deduplicate.duplicated)
                 elif end > len(contig_to_deduplicate.sequence) - self.end_buffer:
+                    print("Deduplicating end of contig")
+                    return (deduplicate_idx, (start, len(contig_to_deduplicate.sequence)))
                     contig_to_deduplicate.duplicated.append((start, len(contig_to_deduplicate.sequence)))
+                    print(contig_to_deduplicate.duplicated)
+
                 else:
                     logging.info(f"What to deduplicate {contig_to_deduplicate}, but can't figure out how")
 
+            print(contig_to_deduplicate.duplicated)
+            print(contig1.duplicated)
+            print(contig2.duplicated) 
 
     def find_candidate_pairs(self, containment_threshold=0.2):
         """
@@ -213,34 +266,77 @@ class Deduplicator():
         Returns:
             list: A list of candidate deduplication pairs, where each pair is a tuple of two contigs.
         """
+        # candidate_pairs = []
+        # candidate_dedup_pairs = []
+        # with multiprocessing.Pool(processes=self.threads) as pool:
+        #     for c1, contig1 in enumerate(self.contigs):
+        #         for c2, contig2 in enumerate(self.contigs):
+        #             if c2 > c1: # Don't need to check pairs that have already been checked
+        #                 pool.apply_async(self.process_candidate_pairs, args=(contig1, contig2, containment_threshold)).get()
+        #                 candidate_pairs.append((contig1, contig2))
+                        
+        # pool.close()
+        # pool.join()
+
+        # return candidate_dedup_pairs
+
+        contig_pairs = [
+            (contig1, contig2)
+            for c1, contig1 in enumerate(self.contigs)
+            for c2, contig2 in enumerate(self.contigs)
+            if c2 > c1
+        ]
+
+        print(contig_pairs)
+
+        with Pool(processes=self.threads) as pool:
+            results = pool.starmap(self.process_candidate_pair, contig_pairs)
+
+        # Process the results
         candidate_dedup_pairs = []
-        for c1, contig1 in enumerate(self.contigs):
-            for c2, contig2 in enumerate(self.contigs):
-                if c2 > c1: # Don't need to check pairs that have already been checked
-
-                    # number of kmers in common
-                    common_kmers = len(set(contig1.homo_dup_kmers) & set(contig2.homo_dup_kmers)) 
-
-                    # Calculate percent of common kmers that are in a contig's list of duplicated kmers
-                    if len(contig1.homo_dup_kmers) > 0:
-                        c1_containment = common_kmers / len(contig1.homo_dup_kmers)
-                    else:
-                        c1_containment = 0
-
-                    if len(contig2.homo_dup_kmers) > 0:
-                        c2_containment = common_kmers / len(contig2.homo_dup_kmers)
-                    else:
-                        c2_containment = 0
-
-                    if c1_containment >= containment_threshold or c2_containment >= containment_threshold:
-                        logging.info(f"found candidate duplicates")
-                        logging.info(f"\tduplicates in {contig1} are {100*c1_containment:.2f}% contained in {contig2}")
-                        logging.info(f"\tduplicates in {contig2} are {100*c2_containment:.2f}% contained in {contig1}")
-
-                        candidate_dedup_pairs.append((contig1, contig2))
+        for pair, result in zip(contig_pairs, results):
+            print(f"pair: {pair} result: {result}")
+            if result:
+                candidate_dedup_pairs.append(pair)
 
         return candidate_dedup_pairs
 
+    def process_candidate_pair(self, contig1, contig2, containment_threshold=0.2):
+        """
+        Helper function for find_candidate_pairs that checks if a pair of contigs are candidates for deduplication.
+
+        Args:
+            contig1 (Contig): contig to test for duplication with contig2
+            contig2 (Contig): contig to test for duplication with contig1
+            containment_threshold (float): The percentage of k-mers that need to be duplicated
+                to qualify as a match. Defaults to 0.2.
+
+        Returns:
+            tuple of Contigs: A pair of contigs that are candidates for deduplication.
+        """
+        print(f"processing contig pair {contig1} and {contig2}")
+        # number of kmers in common
+        common_kmers = len(set(contig1.homo_dup_kmers) & set(contig2.homo_dup_kmers))
+
+        # Calculate percent of common kmers that are in a contig's list of duplicated kmers
+        if len(contig1.homo_dup_kmers) > 0:
+            c1_containment = common_kmers / len(contig1.homo_dup_kmers)
+        else:
+            c1_containment = 0
+
+        if len(contig2.homo_dup_kmers) > 0:
+            c2_containment = common_kmers / len(contig2.homo_dup_kmers)
+        else:
+            c2_containment = 0
+
+        if c1_containment >= containment_threshold or c2_containment >= containment_threshold:
+            logging.info(f"found candidate duplicates")
+            logging.info(f"\tduplicates in {contig1} are {100*c1_containment:.2f}% contained in {contig2}")
+            logging.info(f"\tduplicates in {contig2} are {100*c2_containment:.2f}% contained in {contig1}")
+
+            return True
+
+        return False
 
     def analyze_kmers(self):
         """
@@ -348,7 +444,7 @@ class Deduplicator():
         '''
         db_path = os.path.join(self.tmp_dir, f"{db_name}.jf")
             
-        cmd = f"jellyfish count -m {kmer_size} -s 100M -t {self.threads} -C {fasta} --output {db_path}"  # TODO: @enhancement add memory opt and bloom filter #TODO: change threading
+        cmd = f"jellyfish count -m {kmer_size} -s 1G -t {self.threads} -C {fasta} --output {db_path}"  # TODO: @enhancement add memory opt and bloom filter #TODO: change threading
         logging.info(cmd)
         
         if not os.path.exists(db_path):
@@ -495,8 +591,15 @@ class Deduplicator():
         '''
         basename = os.path.join(self.tmp_dir, f"{outname}")
 
+        # Build index - don't rebuild if exists
         cmd = f'''
         bwa index {self.assembly}
+        '''
+        logging.info(cmd)
+        if not os.path.exists(f"{self.assembly}.bwt"):
+            subprocess.check_output(cmd, shell=True)
+
+        cmd = f'''
         bwa mem -t {self.threads} -k {self.kmer_size} -T {self.kmer_size} -a -c 500 {self.assembly} {kmer_fasta} > {basename}.sam
         samtools view -@ 8 -b {basename}.sam > {basename}.bam
         samtools sort -@ 8 -m 1G {basename}.bam > {basename}.sorted.bam
@@ -548,8 +651,12 @@ class Deduplicator():
             outfile = f"{bam}.depth"
             cmd = f"samtools depth -a {bam} > {outfile}" 
             print(cmd)
-            p = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT) 
-            retval = p.wait()
+
+            if not os.path.exists(outfile):
+                p = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT) 
+                retval = p.wait()
+            else:
+                print(f"\tSkipping because results already exist")
             
             with open(outfile, "r") as file:
                 for line in file:
@@ -562,7 +669,6 @@ class Deduplicator():
             for contig in self.contigs:
                 if contig.name not in contig_depths.keys():
                     contig_depths[contig.name] = [0] * len(contig.sequence)
-            # print(contig_depths)
                     
             return contig_depths
 
@@ -621,7 +727,7 @@ class Deduplicator():
                 x, y = line.strip().split()
                 data.append(int(y))
 
-        # TODO: @enhancement add a cutoff for the histogram, for now, max cov 500
+        # TODO: @enhancement add a cutoff for the histogram, for now, max cov 200
         data = data[:200]
 
         # TODO: @enhancement add more sophisticated fitting, for now, min cov ~20
@@ -648,7 +754,7 @@ class Deduplicator():
 
         # Mixture of Gaussians
         def bimodal(x, mu1, sigma1, A1, sigma2, A2):
-            mu2 = 2*mu1
+            mu2 = 2*mu1 # second peak is exactly twice the first
             return gauss(x, mu1, sigma1, A1) + gauss(x, mu2, sigma2, A2)
 
         # Get the data
@@ -751,7 +857,6 @@ if __name__ == "__main__":
     # Disable the profiler
     profiler.disable()
 
-    # Print the profiler statistics
-    profiler.print_stats(sort='cumulative')
-
-    
+    # Create a Stats object
+    stats = pstats.Stats(profiler)
+    stats.strip_dirs().sort_stats('cumulative').print_stats(100)

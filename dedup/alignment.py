@@ -6,8 +6,7 @@ from statistics import mean
 
 from contig import Contig
 
-logging.basicConfig(level=logging.DEBUG)
-
+logger = logging.getLogger(__name__)
 
 class Alignment:
     """
@@ -41,7 +40,7 @@ class Alignment:
         print(f"New PAF length: {len(paf_df)}")
 
         self.nodes = self.parse_paf(paf_df)
-        self.max_gap = 50000
+        self.max_gap = 25000
 
     def find_best_alignment(self):
         """
