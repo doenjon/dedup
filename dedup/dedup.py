@@ -8,8 +8,6 @@ import argparse
 import datetime
 import subprocess
 from subprocess import run
-import cProfile
-
 
 
 import pandas as pd
@@ -725,15 +723,8 @@ def parse_args():
 
 if __name__ == "__main__":
 
-    profiler = cProfile.Profile()
-    profiler.enable()
-
     args = parse_args()
 
     dedup = Deduplicator(args.assembly, args.reads, args)
 
     dedup.dedup()
-
-    profiler.disable()
-    profiler.print_stats(sort='cumulative', limit=100)
-
