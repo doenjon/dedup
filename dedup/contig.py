@@ -31,8 +31,8 @@ class Contig():
             self.name = name
             self.sequence = sequence
 
-            self.homo_dup_depth = []
-            self.homo_non_dup_depth = []
+            self.homo_dup_depth = [0] * len(sequence)
+            self.homo_non_dup_depth = [0] * len(sequence)
         
             self.homo_dup_kmers = []
             self.dnd_ratio = []
