@@ -109,7 +109,7 @@ class Deduplicator():
                 self.homozygous_upper_bound = None
 
             # TODO change to TemporaryDirectory
-            self.tmp_dir = ".tmp2"
+            self.tmp_dir = ".tmp"
             if not params.save_tmp and os.path.exists(self.tmp_dir):
                 shutil.rmtree(self.tmp_dir)
             # TODO: clean up tmp after successful run
@@ -141,7 +141,7 @@ class Deduplicator():
         # Dedup pairs in parallel
         with Pool(processes=self.threads) as pool:
             # Results is a list of tuples, where each tuple is (index_of_contig_to_mark_duplication, (start, end))
-            results = pool.starmap(self.dedup_pair, [(contig1, contig2, self_alignment) for contig1, contig2 in candidate_pairs])
+            results = pool.starmap(dedup_pair, [(contig1, contig2, self_alignment) for contig1, contig2 in candidate_pairs])
 
         # Process the results
         for pair, result in zip(candidate_pairs, results):
@@ -151,7 +151,8 @@ class Deduplicator():
             for c in self.contigs:
                 file.write(c.get_non_duplicated_sequence())
 
-    def dedup_pair(self, contig1, contig2, self_alignment):
+    @staticmethod
+    def dedup_pair(contig1, contig2, self_alignment):
             """
             Analyse the alignment and duplication between two contigs, 
             if they can be deduplicated, mark appropriate regions for deduplication
@@ -224,18 +225,20 @@ class Deduplicator():
                 deduplicate_idx = 1
 
             # If over threshold, deduplicate the whole contig
-            if contig_percent_duplicated > self.full_duplication_threshold:
+            full_duplicattion_threshold = 0.9
+            if contig_percent_duplicated > full_duplication_threshold:
                 print("Deduplicating whole contig")
                 # contig_to_deduplicate.duplicated.append((0, len(contig_to_deduplicate.sequence)))
                 return (deduplicate_idx, (0, len(contig_to_deduplicate.sequence)))
             # If not over threshold, but close to an edge, deduplicate to the edge
             else:
-                if start < self.end_buffer:
+                end_buffer = 25000
+                if start < end_buffer:
                     print("Deduplicating start of contig")
                     # contig_to_deduplicate.duplicated.append((0, end))
                     return (deduplicate_idx, (0, end))
                     # print(contig_to_deduplicate.duplicated)
-                elif end > len(contig_to_deduplicate.sequence) - self.end_buffer:
+                elif end > len(contig_to_deduplicate.sequence) - end_buffer:
                     print("Deduplicating end of contig")
                     return (deduplicate_idx, (start, len(contig_to_deduplicate.sequence)))
                     # contig_to_deduplicate.duplicated.append((start, len(contig_to_deduplicate.sequence)))
