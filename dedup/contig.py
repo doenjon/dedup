@@ -1,16 +1,20 @@
 import logging
 import os
 import subprocess
+from logging import handlers
 
 import numpy as np
 import plotly.express as px
 
+from multiprocessing import Pool, Array
+
+
+logger = logging.getLogger(__name__)
 
 class Contig():
     """
     Represents a contig with its name, sequence, and other attributes.
     """
-    
     
     def __init__(self, name, sequence):
             """
@@ -59,7 +63,7 @@ class Contig():
                 dnd = 2*dnd - 1
                 self.dnd_ratio.append(dnd)
     
-    def plot_dnd_ratio(self, window=1000):
+    def plot_dnd_ratio(self, window=10000):
             """
             Plots the moving average of the dnd_ratio and saves the plot as an image and HTML file.
 
@@ -80,7 +84,7 @@ class Contig():
                 
             fig = px.scatter(x=pos, y=moving_ave, labels={'x': 'Position', 'y': '% duplicated kmers'})
             fig.write_image(f'results/{self.name}_dnd_ratio.png')
-            fig.write_html(f'results/{self.name}_dnd_ratio.html')
+            # fig.write_html(f'results/{self.name}_dnd_ratio.html')
 
     def get_kmers(self, bam):
         """
@@ -104,7 +108,7 @@ class Contig():
                 break
 
             line = line.decode('UTF-8').strip().split()
-            self.homo_dup_kmers.append(line[0])
+            self.homo_dup_kmers.append(line[0])        
 
     def get_non_duplicated_sequence(self):
             """
@@ -120,23 +124,42 @@ class Contig():
             """
             logging.debug(f"{self.name} duplicated on {self.duplicated}")
            
+            # TODO handle multiple deduplication intervals
+
+            tdk = sum(self.homo_dup_depth) / 21
+            tndk = sum(self.homo_non_dup_depth) / 21
             if not self.duplicated:
-                return f">{self.name}\n{self.sequence}"
+                logging.debug(f"{self.name} -- 0 out of {tdk} kmers duplicated removed. 0 out of {tndk} non_duplicated kmers removed.")
+                return f">{self.name}\n{self.sequence}\n"
             else:
+
                 # If completely duplicated
                 for interval in self.duplicated:
+                    logging.debug(f"{self.name} -- {tdk} out of {tdk} duplicated kmers removed. {tndk} out of {tndk} non_duplicated kmers removed. dnd dedup ratio is {(tdk / (tndk+1)):.2f}")
                     if interval[1] - interval[0] == len(self.sequence):
                         return ""
+
+                # Otherwise, find start and end of non-duplicated sequence
+                # get 5' start
+                start = 0
+                for interval in self.duplicated:
+                    if 0 in interval and interval[1] > start:
+                        start = interval[1]
+
+                end = len(self.sequence)
+                for interval in self.duplicated:
+                    if len(self.sequence) in interval and interval[0] < end:
+                        end = interval[0]
                 
-                # If 5' duplicated
-                for interval in self.duplicated:
-                    if 0 in interval:
-                        return f"{self.name}\n{self.sequence[interval[1]:]}\n"
-               
-                # If 3' duplicated
-                for interval in self.duplicated:
-                    if len(self.sequence) in interval:
-                        return f"{self.name}\n{self.sequence[0:interval[0]]}\n"
+                removed_dup = (sum(self.homo_dup_depth[0:start]) + sum(self.homo_dup_depth[end:])) / 21
+                removed_ndup = (sum(self.homo_non_dup_depth[0:start]) + sum(self.homo_non_dup_depth[end:])) / 21
+                logging.debug(f"{self.name} -- {removed_dup} out of {tdk} duplicated kmers removed ({(100*removed_dup/(tdk+1)):.2f}%). {removed_ndup} out of {tndk} non_duplicated kmers removed({(100*removed_ndup/(tdk+1)):.2f}%). dnd dedup ratio is {(removed_dup / (1+removed_ndup)):.2f}")
+
+                return f">{self.name}\n{self.sequence[start:end]}\n"
+
     
+    def __lt__(self, other):
+        return self.name < other.name
+
     def __repr__(self):
         return f"contig: {self.name} ({len(self.sequence)})"
