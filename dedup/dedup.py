@@ -132,60 +132,15 @@ class Deduplicator():
         writing the deduplicated contigs to a file.
         '''
         # Collect kmers stats
-        # self.analyze_kmers()
+        self.analyze_kmers()
 
         # # Perform whole genome self-alignment
         self_alignment = self.self_alignment()
 
-        # Pickle self.contigs
-        # with open("contigs.pickle", "wb") as file:
-        #     pickle.dump(self.contigs, file)
-
-        # Load pickled contigs
-        with open("contigs.pickle", "rb") as file:
-            self.contigs = pickle.load(file)
-
-        # for c in self.contigs:
-        #     print(f"plotting {c}")
-        #     c.plot_dnd_ratio()
-
         # Find candidate pairs of contigs to deduplicate
         candidate_pairs = self.find_candidate_pairs_hash()
-        # candidate_pairs = self.find_candidate_pairs()
-        #candidate_pairs = self.find_candidate_pairs_mp()
-
-        # print(candidate_pairs)
 
         logging.debug(f"candidate_pairs: {candidate_pairs}")
-
-        
-        # Dedup pairs no mp
-
-        # results = []
-        # for pair in candidate_pairs:
-        #     alignment_df = self.get_alignment_df(self_alignment, pair[0].name, pair[1].name)
-        #     print(f"alignment_df: \n{alignment_df}")
-        #     results.append(self.dedup_pair(pair[0], pair[1], alignment_df))
-
-        print("Staring pool")
-        # Dedup pairs in parallel
-        from concurrent.futures import ProcessPoolExecutor
-        
-        # candidate_pairs_alignment = []
-        # print("filtering alignments")
-        # for pair in candidate_pairs:
-        #     print(pair)
-        # try alignment = self_alignment.loc[(self_alignment["qname"] == pair[0].name) & (self_alignment["tname"] == pair[1].name)]
-        # try multi-index
-        # self_alignment.set_index(["qname", "tname"], inplace=True)
-        # alignment = self_alignment.loc[(pair[0].name, pair[1].name)]
-        #     alignment = self_alignment[(self_alignment["qname"] == pair[0].name) & (self_alignment["tname"] == pair[1].name)]
-        #     candidate_pairs_alignment.append((pair[0], pair[1], alignment.copy()))
-        
-        # for p in candidate_pairs_alignment:
-        #     print(p)
-        # # with ProcessPoolExecutor() as executor:
-        # #     results = list(executor.map(Deduplicator.dedup_pair, [(contig1, contig2, self_alignment) for contig1, contig2 in candidate_pairs[0:10]]))
 
         jobs = []
         for pair in candidate_pairs:
@@ -225,17 +180,6 @@ class Deduplicator():
             Raises:
                 None
             """
-
-            print(f"dedup_pair: {contig1} and {contig2}")
-
-            # Get the alignments for the two contigs
-            # alignment_df = self_alignment[(self_alignment["qname"] == contig1.name) & (self_alignment["tname"] == contig2.name)]
-            # alignment_df = self_alignment.loc[(contig1.name, contig2.name), :]
-
-            # alignment_df = self_alignment.loc[
-            #     (self_alignment["qname"] == contig1.name) & (self_alignment["tname"] == contig2.name)
-            # ]
-            # alignment_df = self_alignment.query('qname == @contig1.name and tname == @contig2.name')
 
             # Calculate the best alignment
             best_alignment = Alignment(contig1, contig2, alignment_df).find_best_alignment()
@@ -332,63 +276,7 @@ class Deduplicator():
             list: A list of candidate deduplication pairs, where each pair is a tuple of two contigs.
         """
 
-        # Create an LSH index
-        # lsh = MinHashLSH(threshold=containment_threshold, num_perm=128)
-        # lsh = MinHashLSHEnsemble(threshold=containment_threshold, num_perm=128)
-        # Index the MinHashes
-        # hashes = {}
-        
-        # logging.info(f"starting pool")
-        # with Manager() as manager:
-        #     log_queue = manager.Queue()
-
-        #     with Pool(processes=self.threads) as pool:
-        #         results = pool.starmap(self.get_hash, [(contig, log_queue) for contig in self.contigs])
-
-        #     # Print the log messages collected from the worker processes
-        #     while not log_queue.empty():
-        #         logging.info(log_queue.get())
-
-
-        # for contig, result in zip(self.contigs, results):
-        #     hashes[contig.name] = result
-        #     lsh.insert(contig.name, result)
-
-        # for contig in self.contigs:
-
-        # logging.info(f"starting pool")
-        # with Pool(processes=self.threads) as pool:
-        #     results = pool.starmap(self.get_hash, self.contigs)
-
-        # logging.info(f"inserting in lhs")
-        # for contig, result in zip(self.contigs, results):
-        #     hashes[contig] = result
-        #     lsh.insert(contig, result)
-
-
-
-    # working
-        # lsh = MinHashLSHEnsemble(threshold=containment_threshold, num_perm=128)
-        # # Index the MinHashes
-        # hashes = {}
-        # index = []
-        # for contig in self.contigs:
-
-        #     print(f"Hashing {contig.name}")
-        #     hash = MinHash()
-        #     for kmer in contig.homo_dup_kmers:
-        #         hash.update(kmer.encode('utf8'))
-            
-        #     index.append((contig, hash, len(contig.homo_dup_kmers)))
-        #     hashes[contig] = hash
-        #     # lsh.insert(contig, hash)
-        
-        # lsh.index(index)
-
-
-        # Working
         lsh = MinHashLSHEnsemble(threshold=containment_threshold, num_perm=128)
-        # Index the MinHashes
         hashes = {}
         index = []
 
@@ -412,8 +300,6 @@ class Deduplicator():
                 results = lsh.query(minhash, len(contig.homo_dup_kmers))
                 results = [r for r in results]
 
-                # print(f"Candidates with Jaccard similarity > {containment_threshold} for input {contig}")
-                # print(f"\t{results}")
                 try:
                     results.remove(contig)  # Remove the contig itself from the result
                 except:
@@ -426,9 +312,7 @@ class Deduplicator():
                         common_kmers = len(set(contig.homo_dup_kmers) & set(contig_2.homo_dup_kmers))
                         c1_containment = common_kmers / (len(contig.homo_dup_kmers) + 1)
                         c2_containment = common_kmers / (len(contig_2.homo_dup_kmers) + 1)
-                        # logging.info(f"\tduplicates in {contig} are {100*c1_containment:.2f}% contained in {contig_2}")
-                        # logging.info(f"\tduplicates in {contig_2} are {100*c2_containment:.2f}% contained in {contig}")
-
+                        
                         # Always make the tuples in the same order
                         if c1_containment > self.containment_threshold or c2_containment > self.containment_threshold:
                             # print(f"\t\tAdded contig pair to candidates")
@@ -439,113 +323,6 @@ class Deduplicator():
 
         list(set(candidate_pairs)) # remove duplicates
         return candidate_pairs
-
-    def find_candidate_pairs(self, containment_threshold=0.2):
-        """
-        Find candidate pairs of contigs that potentially contain duplicates.
-
-        Args:
-            containment_threshold (float): The percentage of k-mers that need to be duplicated
-                to qualify as a match. Defaults to 0.2.
-
-        Returns:
-            list: A list of candidate deduplication pairs, where each pair is a tuple of two contigs.
-        """
-
-        contig_pairs = [
-            (contig1, contig2)
-            for c1, contig1 in enumerate(self.contigs)
-            for c2, contig2 in enumerate(self.contigs)
-            if c2 > c1
-        ]
-
-        # Process the results
-        candidate_dedup_pairs = []
-        for pair in contig_pairs:
-            if self.process_candidate_pair(pair[0], pair[1]):
-                if pair[0] < pair[1]:
-                    candidate_dedup_pairs.append(pair)
-                else:
-                    candidate_dedup_pairs.append((pair[1], pair[0]))
-
-
-        return candidate_dedup_pairs
-        
-
-    @staticmethod
-    def process_candidate_pair(contig1, contig2, containment_threshold=0.2):
-        """
-        Helper function for find_candidate_pairs that checks if a pair of contigs are candidates for deduplication.
-
-        Args:
-            contig1 (Contig): contig to test for duplication with contig2
-            contig2 (Contig): contig to test for duplication with contig1
-            containment_threshold (float): The percentage of k-mers that need to be duplicated
-                to qualify as a match. Defaults to 0.2.
-
-        Returns:
-            tuple of Contigs: A pair of contigs that are candidates for deduplication.
-        """
-        print(f"processing contig pair {contig1} and {contig2}")
-        # number of kmers in common
-        common_kmers = len(set(contig1.homo_dup_kmers) & set(contig2.homo_dup_kmers))
-
-        # Calculate percent of common kmers that are in a contig's list of duplicated kmers
-        if len(contig1.homo_dup_kmers) > 0:
-            c1_containment = common_kmers / len(contig1.homo_dup_kmers)
-        else:
-            c1_containment = 0
-
-        if len(contig2.homo_dup_kmers) > 0:
-            c2_containment = common_kmers / len(contig2.homo_dup_kmers)
-        else:
-            c2_containment = 0
-
-        if c1_containment >= containment_threshold or c2_containment >= containment_threshold:
-            logging.info(f"found candidate duplicates")
-            logging.info(f"\tduplicates in {contig1} are {100*c1_containment:.2f}% contained in {contig2}")
-            logging.info(f"\tduplicates in {contig2} are {100*c2_containment:.2f}% contained in {contig1}")
-
-            return True
-
-        return False
-
-    def find_candidate_pairs_mp(self, containment_threshold=0.2):
-        """
-        Find candidate pairs of contigs that potentially contain duplicates.
-
-        Args:
-            containment_threshold (float): The percentage of k-mers that need to be duplicated
-                to qualify as a match. Defaults to 0.2.
-
-        Returns:
-            list: A list of candidate deduplication pairs, where each pair is a tuple of two contigs.
-        """
-
-        contig_pairs = [
-            (contig1, contig2)
-            for c1, contig1 in enumerate(self.contigs)
-            for c2, contig2 in enumerate(self.contigs)
-            if c2 > c1
-        ]
-
-        with Pool(processes=self.threads) as pool:
-            results = pool.starmap(self.process_candidate_pair, contig_pairs)
-
-        # Process the results
-        candidate_dedup_pairs = []
-        # for c1, contig1 in enumerate(self.contigs):
-        #     for c2, contig2 in enumerate(self.contigs):
-        #         if c2 > c1: # Don't need to check pairs that have already been checked
-        for pair, result in zip(contig_pairs, results):
-            print(f"pair: {pair} result: {result}")
-            if result:
-                candidate_dedup_pairs.append(pair)
- 
-                    # number of kmers in common
-                    # common_kmers = len(set(contig1.homo_dup_kmers) & set(contig2.homo_dup_kmers)) 
-        return candidate_dedup_pairs
-
 
     def analyze_kmers(self):
         """
@@ -721,23 +498,6 @@ class Deduplicator():
 
             return alignment_df
 
-        # alignment_df = pd.read_csv(alignment_file, sep='\t', header=None)
-        # alignment_df.columns = ["qname", "qlen", "qstart", "qend", "strand", "tname", "tlen", "tstart", "tend", "nmatch", "alen", "mapq", "xtra1", "xtra2", "xtra3", "xtra4", "xtra5"]
-        # alignment_df["qname"] = alignment_df["qname"].astype(str)
-        # alignment_df["tname"] = alignment_df["tname"].astype(str)
-
-        # return alignment_df
-        def parse_alignment_file(alignment_file):
-            alignment_dict = {}
-            with open(alignment_file, 'r') as file:
-                for line in file:
-                    if line.startswith('#'):
-                        continue
-                    fields = line.strip().split('\t')
-                    qname = fields[0]
-                    tname = fields[5]
-                    alignment_dict[qname] = tname
-            return alignment_dict
     
     def filter_kmer_db(self, kmer_db, lower_bound, upper_bound):
         '''
