@@ -57,7 +57,7 @@ class Contig():
         for pos in range(len(self.homo_dup_depth)):
             # if no homozygous kmers in this position
             if self.homo_dup_depth[pos] == 0 and self.homo_non_dup_depth[pos] == 0:
-                self.dnd_ratio.append(0) # TODO: find a better way to handle no data
+                self.dnd_ratio.append(np.nan) # TODO: find a better way to handle no data
             else:
                 # ie. percent of homozygous kmers that are duplicated
                 dnd = self.homo_dup_depth[pos] / (self.homo_dup_depth[pos] + self.homo_non_dup_depth[pos])
@@ -76,15 +76,23 @@ class Contig():
                 None
             """
             def moving_average(data, window_size):
-                return np.convolve(data, np.ones(window_size) / window_size, mode='valid')
+                ma = []
+                # for i in range(0, len(data) - window_size):
+                #     ma.append(np.nanmean(data[i:i+window_size]))
+                # return ma
+
+                for i in range(0, len(data), window_size):
+                    ma.append(np.nanmean(data[i:i+window_size]))
+                return ma
+                # return np.convolve(data, np.ones(window_size) / window_size, mode='valid')
            
             moving_ave = moving_average(self.dnd_ratio, window)
-            pos = [i for i in range(0, len(moving_ave))]
+            pos = [i*window for i in range(0, len(moving_ave))]
 
             if not os.path.exists("results"):
                 os.makedirs("results")
                 
-            fig = px.scatter(x=pos, y=moving_ave, labels={'x': 'Position', 'y': '% duplicated kmers'})
+            fig = px.scatter(x=pos, y=moving_ave, labels={'x': 'Position', 'y': 'Duplication Score'})
             fig.write_image(f'results/{self.name}_dnd_ratio.png')
             # fig.write_html(f'results/{self.name}_dnd_ratio.html')
 
@@ -98,9 +106,9 @@ class Contig():
         Returns:
             None
         """
-        logging.info(f"reading bam: {bam} for kmers to {self.name}")
-        cmd = f"samtools view {bam} -@ 8 '{self.name}'"  
-        logging.info(cmd)
+        logger.info(f"reading bam: {bam} for kmers to {self.name}")
+        cmd = f"samtools view {bam} -@ {self.threads} '{self.name}'"  
+        logger.info(cmd)
         
         proc = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE)
 
@@ -124,7 +132,7 @@ class Contig():
             Returns:
                 str: The non-duplicated sequence.
             """
-            logging.debug(f"{self.name} duplicated on {self.duplicated}")
+            logger.debug(f"{self.name} duplicated on {self.duplicated}")
            
             # TODO handle multiple deduplication intervals
 
@@ -132,24 +140,24 @@ class Contig():
             tndk = sum(self.homo_non_dup_depth)
 
             if not self.duplicated:
-                logging.debug(f"{self.name} -- 0 out of {tdk} kmers duplicated removed. 0 out of {tndk} non_duplicated kmers removed.")
+                logger.debug(f"{self.name} -- 0 out of {tdk} kmers duplicated removed. 0 out of {tndk} non_duplicated kmers removed.")
                 return f">{self.name}\n{self.sequence}\n"
             else:
 
                 # # If completely duplicated
                 # for interval in self.duplicated:
                 #     try: # catch divide by zero
-                #         logging.debug(f"{self.name} -- {tdk} out of {tdk} duplicated kmers removed. {tndk} out of {tndk} non_duplicated kmers removed. dnd dedup ratio is {(tdk / (tndk)):.2f}")
+                #         logger.debug(f"{self.name} -- {tdk} out of {tdk} duplicated kmers removed. {tndk} out of {tndk} non_duplicated kmers removed. dnd dedup ratio is {(tdk / (tndk)):.2f}")
                 #     except ZeroDivisionError:
-                #         logging.debug(f"{self.name} -- {tdk} out of {tdk} duplicated kmers removed. {tndk} out of {tndk} non_duplicated kmers removed. dnd dedup ratio is {(tdk / (tndk + 1)):.2f}")
+                #         logger.debug(f"{self.name} -- {tdk} out of {tdk} duplicated kmers removed. {tndk} out of {tndk} non_duplicated kmers removed. dnd dedup ratio is {(tdk / (tndk + 1)):.2f}")
 
                 # If completely duplicated
                 for interval in self.duplicated:
                     if interval[1] - interval[0] == len(self.sequence):
                         try: # catch divide by zero
-                            logging.debug(f"{self.name} -- {tdk} out of {tdk} duplicated kmers removed. {tndk} out of {tndk} non_duplicated kmers removed. dnd dedup ratio is {(tdk / (tndk)):.2f}")
+                            logger.debug(f"{self.name} -- {tdk} out of {tdk} duplicated kmers removed. {tndk} out of {tndk} non_duplicated kmers removed. dnd dedup ratio is {(tdk / (tndk)):.2f}")
                         except ZeroDivisionError:
-                            logging.debug(f"{self.name} -- {tdk} out of {tdk} duplicated kmers removed. {tndk} out of {tndk} non_duplicated kmers removed. dnd dedup ratio is {(tdk / (tndk + 1)):.2f}")
+                            logger.debug(f"{self.name} -- {tdk} out of {tdk} duplicated kmers removed. {tndk} out of {tndk} non_duplicated kmers removed. dnd dedup ratio is {(tdk / (tndk + 1)):.2f}")
                         
                         return ""
 
@@ -169,9 +177,9 @@ class Contig():
                 removed_ndup = (sum(self.homo_non_dup_depth[0:start]) + sum(self.homo_non_dup_depth[end:]))
                 
                 try:
-                    logging.debug(f"{self.name} -- {removed_dup} out of {tdk} duplicated kmers removed ({(100*removed_dup/(tdk)):.2f}%). {removed_ndup} out of {tndk} non_duplicated kmers removed({(100*removed_ndup/(tndk)):.2f}%). dnd dedup ratio is {(removed_dup / (removed_ndup)):.2f}")
+                    logger.debug(f"{self.name} -- {removed_dup} out of {tdk} duplicated kmers removed ({(100*removed_dup/(tdk)):.2f}%). {removed_ndup} out of {tndk} non_duplicated kmers removed({(100*removed_ndup/(tndk)):.2f}%). dnd dedup ratio is {(removed_dup / (removed_ndup)):.2f}")
                 except ZeroDivisionError:
-                    logging.debug(f"{self.name} -- {removed_dup} out of {tdk} duplicated kmers removed ({(100*removed_dup/(tdk+1)):.2f}%). {removed_ndup} out of {tndk} non_duplicated kmers removed({(100*removed_ndup/(tndk+1)):.2f}%). dnd dedup ratio is {(removed_dup / (1+removed_ndup)):.2f}")
+                    logger.debug(f"{self.name} -- {removed_dup} out of {tdk} duplicated kmers removed ({(100*removed_dup/(tdk+1)):.2f}%). {removed_ndup} out of {tndk} non_duplicated kmers removed({(100*removed_ndup/(tndk+1)):.2f}%). dnd dedup ratio is {(removed_dup / (1+removed_ndup)):.2f}")
 
                 # Only report sequence if over minimum sequence length
                 if len(self.sequence[start:end]) > self.min_sequence_len:

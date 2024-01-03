@@ -2,7 +2,7 @@
 
 import logging
 import pandas as pd
-from statistics import mean
+import numpy as np
 
 from contig import Contig
 
@@ -40,7 +40,7 @@ class Alignment:
         # print(f"New PAF length: {len(paf_df)}")
 
         self.nodes = self.parse_paf(paf_df)
-        self.max_gap = 25000
+        self.max_gap = 100000
 
     def find_best_alignment(self):
         """
@@ -68,7 +68,7 @@ class Alignment:
         
         # If there are not alignments
         if len(alignments) == 0:
-            print("No alignment found")
+            logger.debug("No alignment found")
             return None
 
         # Get the best alignment
@@ -79,7 +79,7 @@ class Alignment:
 
         # Aligmment score must be positive, else report no alignment
         if best_alignment_score <= 0:
-            print("No alignment found")
+            logger.debug("No alignment found")
             return None
 
         # Get the interval of the best alignment
@@ -98,7 +98,7 @@ class Alignment:
             tend = start_node.contig2_end
 
         result = {"qstart": qstart, "qend": qend, "tstart": tstart, "tend": tend}
-        logging.debug(f"Best alignment: {result}")
+        logger.debug(f"Best alignment: {result}")
 
         return result
     
@@ -135,6 +135,7 @@ class Alignment:
         # add current node to the best path and score
         score += node.score
         best_path.append(node)
+
         return score, best_path
             
     def parse_paf(self, paf_df):
@@ -157,8 +158,11 @@ class Alignment:
                 direction = row['strand']
 
                 # score is average dnd_ratio of the segment weighted by length
-                score = (contig1_end-contig1_start)*mean(self.contig1.dnd_ratio[contig1_start:contig1_end]) + \
-                        (contig2_end-contig2_start)*mean(self.contig2.dnd_ratio[contig2_start:contig2_end])
+                score = (contig1_end-contig1_start)*np.nanmean(self.contig1.dnd_ratio[contig1_start:contig1_end]) + \
+                        (contig2_end-contig2_start)*np.nanmean(self.contig2.dnd_ratio[contig2_start:contig2_end])
+
+                if np.isnan(score):
+                    score = 0
 
                 node = Node(contig1_start, contig1_end, contig2_start, contig2_end, direction, score)
 
@@ -195,10 +199,13 @@ class Alignment:
                         contig_2_end = max(node1.contig2_end,node2.contig2_start)
 
                         # Calculate edge score
-                        contig1_mean_dnd = 0 if (contig_1_end - contig_1_start) == 0 else mean(self.contig1.dnd_ratio[contig_1_start:contig_1_end])
-                        contig2_mean_dnd = 0 if (contig_2_end - contig_2_start) == 0 else mean(self.contig2.dnd_ratio[contig_2_start:contig_2_end])
+                        contig1_mean_dnd = 0 if (contig_1_end - contig_1_start) == 0 else np.nanmean(self.contig1.dnd_ratio[contig_1_start:contig_1_end])
+                        contig2_mean_dnd = 0 if (contig_2_end - contig_2_start) == 0 else np.nanmean(self.contig2.dnd_ratio[contig_2_start:contig_2_end])
                         score = (node2.contig1_start - node1.contig1_end) * contig1_mean_dnd + \
                                 (node2.contig2_start - node1.contig2_end) * contig2_mean_dnd
+
+                        if np.isnan(score):
+                            score = 0
 
                         edge = Edge(node1, node2, score)
 
@@ -220,18 +227,21 @@ class Alignment:
                         contig_2_end = max(node1.contig2_end,node2.contig2_start)
                         
                         # Calculate edge score
-                        contig1_mean_dnd = 0 if (contig_1_end - contig_1_start) == 0 else mean(self.contig1.dnd_ratio[contig_1_start:contig_1_end])
-                        contig2_mean_dnd = 0 if (contig_2_end - contig_2_start) == 0 else mean(self.contig2.dnd_ratio[contig_2_start:contig_2_end])
+                        contig1_mean_dnd = 0 if (contig_1_end - contig_1_start) == 0 else np.nanmean(self.contig1.dnd_ratio[contig_1_start:contig_1_end])
+                        contig2_mean_dnd = 0 if (contig_2_end - contig_2_start) == 0 else np.nanmean(self.contig2.dnd_ratio[contig_2_start:contig_2_end])
                         score = (node1.contig1_end - node2.contig1_start) * contig1_mean_dnd + \
                                 (node1.contig2_end - node2.contig2_start) * contig2_mean_dnd
                         
+                        if np.isnan(score):
+                            score = 0
+
                         edge = Edge(node1, node2, score)
 
                         node1.children.append(edge)
                         node2.parents.append(edge)
                         self.edges.append(edge)
 
-        print(f"Created DAG with {len(self.nodes)} nodes and {len(self.edges)} edges")  
+        logger.debug(f"Created DAG with {len(self.nodes)} nodes and {len(self.edges)} edges")  
 
     def simplify_paf(self, paf_df):
             """
@@ -251,7 +261,9 @@ class Alignment:
                         (row['qstart'] >= paf_df.loc[j, 'qstart']) and (row['qend'] <= paf_df.loc[j, 'qend'])
                     ) and (
                         (row['tstart'] >= paf_df.loc[j, 'tstart']) and (row['tend'] <= paf_df.loc[j, 'tend'])
-                    )
+                    ) and {
+                        row["strand"] == paf_df.loc[j, "strand"]
+                    }
                     for j in indices_to_keep
                 ):
                     indices_to_keep.append(idx)

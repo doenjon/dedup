@@ -38,7 +38,7 @@ import pickle
 
 # Set logging
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
@@ -136,13 +136,17 @@ class Deduplicator():
         # Collect kmers stats
         self.analyze_kmers()
 
+        # print(f"generating plots")
+        # for contig in self.contigs[1:10]:
+        #     contig.plot_dnd_ratio()
+
         # # Perform whole genome self-alignment
         self_alignment = self.self_alignment()
 
         # Find candidate pairs of contigs to deduplicate
         candidate_pairs = self.find_candidate_pairs_hash()
 
-        logging.debug(f"candidate_pairs: {candidate_pairs}")
+        logger.debug(f"candidate_pairs: {candidate_pairs}")
 
         jobs = []
         for pair in candidate_pairs:
@@ -150,17 +154,15 @@ class Deduplicator():
             jobs.append((pair[0], pair[1], alignment_df))
 
         # with Pool(processes=self.threads) as pool:
-        with Pool(processes=1) as pool:
+        with Pool(processes=self.threads) as pool:
             # Results is a list of tuples, where each tuple is (index_of_contig_to_mark_duplication, (start, end))
             results = pool.starmap(self.dedup_pair, [job for job in jobs])
 
         # Process the results
         for pair, result in zip(candidate_pairs, results):
-            print(f"pair: {pair} result: {result}")
+            logging.debug(f"pair: {pair} result: {result}")
             if result:
                 pair[result[0]].duplicated.append(result[1])
-
-        print(len(candidate_pairs))
 
         with open(f"deduplicated_contigs.fasta", "w") as file:
             for c in self.contigs:
@@ -189,23 +191,23 @@ class Deduplicator():
 
             # If there is no alignment, quit
             if best_alignment is None:
-                print("no alignment found -- have not handled this")
+                logger.debug("no alignment found -- have not handled this")
                 return
 
             # Find the contig that is more duplicated 
             contig1_percent_duplicated = (best_alignment["qend"] - best_alignment["qstart"]) / len(contig1.sequence)
             contig2_percent_duplicated = (best_alignment["tend"] - best_alignment["tstart"]) / len(contig2.sequence)
             
-            logging.debug("--------------------------------------------------------------------------------")
-            logging.debug(f"{contig1} is {100*contig1_percent_duplicated:.2f}% duplicated by alignment")
-            logging.debug(f"{contig2} is {100*contig2_percent_duplicated:.2f}% duplicated by alignment")
+            logger.debug("--------------------------------------------------------------------------------")
+            logger.debug(f"{contig1} is {100*contig1_percent_duplicated:.2f}% duplicated by alignment")
+            logger.debug(f"{contig2} is {100*contig2_percent_duplicated:.2f}% duplicated by alignment")
            
            
             c1_homo_dup_aln = contig1.homo_dup_depth[best_alignment["qstart"]:best_alignment["qend"]]
             c1_homo_dup_tot = contig1.homo_dup_depth[:]
             c1_homo_non_dup_aln = contig1.homo_non_dup_depth[best_alignment["qstart"]:best_alignment["qend"]]
             c1_homo_non_dup_tot = contig1.homo_non_dup_depth[:]
-            logging.debug(f"{contig1} alignment has {sum(c1_homo_dup_aln)}/{sum(c1_homo_dup_tot)} duplicated and {sum(c1_homo_non_dup_aln)}/{sum(c1_homo_non_dup_tot)} non duplicated kmers")
+            logger.debug(f"{contig1} alignment has {sum(c1_homo_dup_aln)}/{sum(c1_homo_dup_tot)} duplicated and {sum(c1_homo_non_dup_aln)}/{sum(c1_homo_non_dup_tot)} non duplicated kmers")
             
             
             c2_homo_dup_aln = contig2.homo_dup_depth[best_alignment["tstart"]:best_alignment["tend"]]
@@ -213,12 +215,12 @@ class Deduplicator():
             c2_homo_non_dup_aln = contig2.homo_non_dup_depth[best_alignment["tstart"]:best_alignment["tend"]]
             c2_homo_non_dup_tot = contig2.homo_non_dup_depth[:]
 
-            logging.debug(f"{contig2} alignment has {sum(c2_homo_dup_aln)}/{sum(c2_homo_dup_tot)} duplicated and {sum(c2_homo_non_dup_aln)}/{sum(c2_homo_non_dup_tot)} non duplicated kmers")
+            logger.debug(f"{contig2} alignment has {sum(c2_homo_dup_aln)}/{sum(c2_homo_dup_tot)} duplicated and {sum(c2_homo_non_dup_aln)}/{sum(c2_homo_non_dup_tot)} non duplicated kmers")
             
-            logging.debug(best_alignment)
+            logger.debug(best_alignment)
             
-            contig1_dnd = mean(contig1.dnd_ratio[best_alignment['qstart']:best_alignment['qend']]) 
-            contig2_dnd = mean(contig2.dnd_ratio[best_alignment['tstart']:best_alignment['tend']])
+            # contig1_dnd = mean(contig1.dnd_ratio[best_alignment['qstart']:best_alignment['qend']]) 
+            # contig2_dnd = mean(contig2.dnd_ratio[best_alignment['tstart']:best_alignment['tend']])
 
             # Get the contig to deduplicate, along with the start and end of the duplicated region
             contig_to_deduplicate = None
@@ -238,25 +240,28 @@ class Deduplicator():
 
             # If over threshold, deduplicate the whole contig
             full_duplication_threshold = 0.9
-            end_buffer = 25000
-            if contig1_percent_duplicated > full_duplication_threshold:
-                contig_to_deduplicate.duplicated = [(0, len(contig_to_deduplicate.sequence))]
-
+            end_buffer = 50000
+            if contig_percent_duplicated > full_duplication_threshold:
+                # contig_to_deduplicate.duplicated = [(0, len(contig_to_deduplicate.sequence))]
+                return (deduplicate_idx, (0, len(contig_to_deduplicate.sequence)))
+            
             # If not over threshold, but close to an edge, deduplicate to the edge
             else:
                 if start < end_buffer:
-                    print("Deduplicating start of contig")
+                    logger.debug(f"Deduplicating start of contig {contig_to_deduplicate}")
                     # contig_to_deduplicate.duplicated.append((0, end))
                     return (deduplicate_idx, (0, end))
                     # print(contig_to_deduplicate.duplicated)
                 elif end > len(contig_to_deduplicate.sequence) - end_buffer:
-                    print("Deduplicating end of contig")
+                    logger.debug(f"Deduplicating end of contig {contig_to_deduplicate}")
                     return (deduplicate_idx, (start, len(contig_to_deduplicate.sequence)))
                     # contig_to_deduplicate.duplicated.append((start, len(contig_to_deduplicate.sequence)))
                     # print(contig_to_deduplicate.duplicated)
 
                 else:
-                    logging.info(f"What to deduplicate {contig_to_deduplicate}, but can't figure out how")
+                    logger.info(f"What to deduplicate {contig_to_deduplicate}, but can't figure out how")
+
+            logger.debug("***Failed to deduplicate***")
 
     @staticmethod
     def get_hash(contig):
@@ -282,13 +287,10 @@ class Deduplicator():
         hashes = {}
         index = []
 
-        print("started pool")
-        with ProcessPoolExecutor(max_workers=1) as executor:
+        with ProcessPoolExecutor() as executor:
             results = list(executor.map(self.get_hash, [c for c in self.contigs]))
         
-        print("done with making hashes")
         for contig, hash in zip(self.contigs, results):
-            
             hashes[contig] = hash
             index.append((contig, hash, len(contig.homo_dup_kmers)))
 
@@ -296,7 +298,6 @@ class Deduplicator():
 
         # Find candidate pairs
         candidate_pairs = []
-        print(f'finding pairs')
         for contig, minhash in hashes.items():
             if len(contig.homo_dup_kmers) > 0:
                 results = lsh.query(minhash, len(contig.homo_dup_kmers))
@@ -310,16 +311,15 @@ class Deduplicator():
 
                 if results:
                     for contig_2 in results:
-                        print(f"Jaccard similarity between {contig} and {contig_2}: {minhash.jaccard(hashes[contig_2])}")
                         common_kmers = len(set(contig.homo_dup_kmers) & set(contig_2.homo_dup_kmers))
                         c1_containment = common_kmers / (len(contig.homo_dup_kmers) + 1)
                         c2_containment = common_kmers / (len(contig_2.homo_dup_kmers) + 1)
-                        
-                        print(f"c1_containment: {c1_containment}")
-                        print(f"c2_containment: {c2_containment}")
+                        # print(f"Jaccard similarity between {contig} and {contig_2}: {minhash.jaccard(hashes[contig_2])}")
+                        # print(f"c1_containment: {c1_containment}")
+                        # print(f"c2_containment: {c2_containment}")
                         # Always make the tuples in the same order
                         if c1_containment > self.containment_threshold or c2_containment > self.containment_threshold:
-                            print(f"\t\tAdded contig pair to candidates")
+                            logger.debug(f"\t\tAdded contig pair to candidates")
                             if contig < contig_2:
                                 candidate_pairs.append((contig, contig_2))
                             else:
@@ -352,7 +352,7 @@ class Deduplicator():
         duplicated_kmers = self.filter_kmer_db(assembly_kmer_db, 2, 8) # TODO: generalize to any copy number?
         homozygous_kmers = self.filter_kmer_db(read_kmer_db, self.homozygous_lower_bound, self.homozygous_upper_bound)
 
-        logging.info(f"\ncalculating common kmers")
+        logger.info(f"\ncalculating common kmers")
         homozygous_duplicated_kmers = list(set(homozygous_kmers) & set(duplicated_kmers))
         homozygous_non_duplicated_kmers = list(set(homozygous_kmers) & set(non_duplicated_kmers))
 
@@ -368,7 +368,7 @@ class Deduplicator():
         # homo_dup_depths = self.get_kmer_depth(homo_dup_bam)
         # homo_non_dup_depths = self.get_kmer_depth(homo_non_dup_bam)
         
-        logging.info("Calculating contig statistics")
+        logger.info("Calculating contig statistics")
         
         # Get a map of which kmers are in which contigs
         homo_dup_kmers_by_contig = self.get_kmers_by_contig(homo_dup_bam)
@@ -410,9 +410,9 @@ class Deduplicator():
                 dict: A dictionary where the keys are contig names and the values are lists of kmers.
             """
 
-            logging.info(f"reading bam: {bam} for kmers")
+            logger.info(f"reading bam: {bam} for kmers")
             cmd = f"samtools view {bam} -@ 8"  
-            logging.info(cmd)
+            logger.info(cmd)
             proc = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE)
 
             # Parse alignment file
@@ -449,14 +449,15 @@ class Deduplicator():
         db_path = os.path.join(self.tmp_dir, f"{db_name}.jf")
             
         cmd = f"jellyfish count -m {kmer_size} -s 1G -t {self.threads} -C {fasta} --output {db_path}"  # TODO: @enhancement add memory opt and bloom filter #TODO: change threading
-        logging.info(cmd)
+        logger.info(cmd)
         
         if not os.path.exists(db_path):
             p = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT) 
             retval = p.wait()
-            print(f"make_kmer_db ret: {retval}")
+            logger.debug(f"make_kmer_db ret: {retval}")
+            #TODO handle return value 
         else:
-            print(f"\tSkipping because results already exist")
+            logger.debug(f"\tSkipping because results already exist")
 
         return db_path
 
@@ -471,15 +472,15 @@ class Deduplicator():
         alignment_file = os.path.join(self.tmp_dir, "self_alignment.paf")
 
         cmd = f"minimap2 -t {self.threads} -DP -k19 -w19 -m200 {self.assembly} {self.assembly} > {alignment_file}"
-        logging.info(cmd)
+        logger.info(cmd)
         if not os.path.exists(alignment_file):
             p = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
             retval = p.wait()
         else:
-            print(f"\tSkipping because results already exist")
+            logger.debug(f"\tSkipping because results already exist")
 
         
-        print(f"parsing alignment file: {alignment_file}")
+        logger.info(f"parsing alignment file: {alignment_file}")
         alignment_dict = {}
         with open(alignment_file, 'r') as file:
             for line in file:
@@ -531,14 +532,14 @@ class Deduplicator():
         '''
         out_file = os.path.join(self.tmp_dir, f"jf_dump_{lower_bound}_{upper_bound}")
         cmd = f"jellyfish dump --lower-count {lower_bound} --upper-count {upper_bound} --output {out_file} {kmer_db}"  
-        logging.info(cmd)
+        logger.info(cmd)
         if not os.path.exists(out_file):
             p = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT) 
             retval = p.wait()
-            print(f"filter_kmer_db ret: {retval}")
+            logger.debug(f"filter_kmer_db ret: {retval}")
 
         else:
-            print(f"\tSkipping because results already exist")
+            logger.debug(f"\tSkipping because results already exist")
 
         kmers = self.read_kmers_from_fasta(out_file)
 
@@ -555,7 +556,7 @@ class Deduplicator():
         Returns: 
             list: list of kmers
         '''
-        print(f"Reading file: {kmer_fasta}")
+        logger.debug(f"Reading file: {kmer_fasta}")
         kmers = []
 
         # read the file fast to make a progress meter...
@@ -588,7 +589,7 @@ class Deduplicator():
                     elapsed = curr_time - start_time
                     pred = elapsed / (ln_count2/(ln_count))
                     remaining_time = str(pred - elapsed)
-                    if logging.DEBUG:
+                    if logger.isEnabledFor(logging.DEBUG):
                         print(f"{100*ln_count2/(ln_count):.2f}% complete -- Predicted remaining: {remaining_time}", end="\r")
         return kmers
 
@@ -631,7 +632,7 @@ class Deduplicator():
         cmd = f'''
         bwa index {self.assembly}
         '''
-        logging.info(cmd)
+        logger.info(cmd)
         if not os.path.exists(f"{self.assembly}.bwt"):
             subprocess.check_output(cmd, shell=True)
 
@@ -642,13 +643,13 @@ class Deduplicator():
         samtools index {basename}.sorted.bam
         '''
 
-        logging.info(cmd)
+        logger.info(cmd)
 
         if not os.path.exists(f"{basename}.sorted.bam"):
             subprocess.check_output(cmd, shell=True)
 
         else:
-            print(f"\tSkipping because results already exist")
+            logger.debug(f"\tSkipping because results already exist")
 
         return f"{basename}.sorted.bam"
         
@@ -686,13 +687,13 @@ class Deduplicator():
             contig_depths = {}
             outfile = f"{bam}.depth"
             cmd = f"samtools depth -a {bam} > {outfile}" 
-            print(cmd)
+            logger.info(cmd)
 
             if not os.path.exists(outfile):
                 p = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT) 
                 retval = p.wait()
             else:
-                print(f"\tSkipping because results already exist")
+                logger.debug(f"\tSkipping because results already exist")
             
             with open(outfile, "r") as file:
                 for line in file:
@@ -729,7 +730,7 @@ class Deduplicator():
         lower_bound = int(mean_homo - std_homo)
         upper_bound = int(mean_homo + std_homo)
         
-        logging.info(f"Set homozygous kmer range to ({lower_bound}, {upper_bound})")
+        logger.info(f"Set homozygous kmer range to ({lower_bound}, {upper_bound})")
         return (lower_bound, upper_bound)
 
     def get_kmer_histogram_data(self, kmer_db):
@@ -748,14 +749,14 @@ class Deduplicator():
         """
         histo_file = os.path.join(self.tmp_dir, 'kmer_counts.histo')
         cmd = f"jellyfish histo {kmer_db} > {histo_file}"  # TODO: @enhancement add memory opt and bloom filter #TODO: change threading
-        logging.info(cmd)
+        logger.info(cmd)
             
         if not os.path.exists(histo_file):
             p = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT) 
             retval = p.wait()
-            print(f"make_kmer_db ret: {retval}")
+            logger.debug(f"make_kmer_db ret: {retval}")
         else:
-            print(f"\tSkipping because results already exist")
+            logger.debug(f"\tSkipping because results already exist")
 
         data = []
         with open(histo_file, 'r') as f:
@@ -822,7 +823,7 @@ class Deduplicator():
         output_file = 'kmer_spectrum_fit.png'  
         plt.savefig(output_file)
         
-        print(params)
+        # print(params)
         mean_het, std_het, _, std_homo, _ = params
         mean_homo = 2*mean_het # enforced in fitting
 
