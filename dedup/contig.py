@@ -44,6 +44,8 @@ class Contig():
 
             self.duplicated = []
 
+            self.min_sequence_len = 5000
+
     def calculate_dnd_ratio(self):
         """
         Calculates the DND (Duplicated Non-Duplicated) ratio for each position in the sequence.
@@ -128,15 +130,27 @@ class Contig():
 
             tdk = sum(self.homo_dup_depth)
             tndk = sum(self.homo_non_dup_depth)
+
             if not self.duplicated:
                 logging.debug(f"{self.name} -- 0 out of {tdk} kmers duplicated removed. 0 out of {tndk} non_duplicated kmers removed.")
                 return f">{self.name}\n{self.sequence}\n"
             else:
 
+                # # If completely duplicated
+                # for interval in self.duplicated:
+                #     try: # catch divide by zero
+                #         logging.debug(f"{self.name} -- {tdk} out of {tdk} duplicated kmers removed. {tndk} out of {tndk} non_duplicated kmers removed. dnd dedup ratio is {(tdk / (tndk)):.2f}")
+                #     except ZeroDivisionError:
+                #         logging.debug(f"{self.name} -- {tdk} out of {tdk} duplicated kmers removed. {tndk} out of {tndk} non_duplicated kmers removed. dnd dedup ratio is {(tdk / (tndk + 1)):.2f}")
+
                 # If completely duplicated
                 for interval in self.duplicated:
-                    logging.debug(f"{self.name} -- {tdk} out of {tdk} duplicated kmers removed. {tndk} out of {tndk} non_duplicated kmers removed. dnd dedup ratio is {(tdk / (tndk+1)):.2f}")
                     if interval[1] - interval[0] == len(self.sequence):
+                        try: # catch divide by zero
+                            logging.debug(f"{self.name} -- {tdk} out of {tdk} duplicated kmers removed. {tndk} out of {tndk} non_duplicated kmers removed. dnd dedup ratio is {(tdk / (tndk)):.2f}")
+                        except ZeroDivisionError:
+                            logging.debug(f"{self.name} -- {tdk} out of {tdk} duplicated kmers removed. {tndk} out of {tndk} non_duplicated kmers removed. dnd dedup ratio is {(tdk / (tndk + 1)):.2f}")
+                        
                         return ""
 
                 # Otherwise, find start and end of non-duplicated sequence
@@ -151,11 +165,18 @@ class Contig():
                     if len(self.sequence) in interval and interval[0] < end:
                         end = interval[0]
                 
-                removed_dup = (sum(self.homo_dup_depth[0:start]) + sum(self.homo_dup_depth[end:])) / 21
-                removed_ndup = (sum(self.homo_non_dup_depth[0:start]) + sum(self.homo_non_dup_depth[end:])) / 21
-                logging.debug(f"{self.name} -- {removed_dup} out of {tdk} duplicated kmers removed ({(100*removed_dup/(tdk+1)):.2f}%). {removed_ndup} out of {tndk} non_duplicated kmers removed({(100*removed_ndup/(tndk+1)):.2f}%). dnd dedup ratio is {(removed_dup / (1+removed_ndup)):.2f}")
+                removed_dup = (sum(self.homo_dup_depth[0:start]) + sum(self.homo_dup_depth[end:]))
+                removed_ndup = (sum(self.homo_non_dup_depth[0:start]) + sum(self.homo_non_dup_depth[end:]))
+                
+                try:
+                    logging.debug(f"{self.name} -- {removed_dup} out of {tdk} duplicated kmers removed ({(100*removed_dup/(tdk)):.2f}%). {removed_ndup} out of {tndk} non_duplicated kmers removed({(100*removed_ndup/(tndk)):.2f}%). dnd dedup ratio is {(removed_dup / (removed_ndup)):.2f}")
+                except ZeroDivisionError:
+                    logging.debug(f"{self.name} -- {removed_dup} out of {tdk} duplicated kmers removed ({(100*removed_dup/(tdk+1)):.2f}%). {removed_ndup} out of {tndk} non_duplicated kmers removed({(100*removed_ndup/(tndk+1)):.2f}%). dnd dedup ratio is {(removed_dup / (1+removed_ndup)):.2f}")
 
-                return f">{self.name}\n{self.sequence[start:end]}\n"
+                # Only report sequence if over minimum sequence length
+                if len(self.sequence[start:end]) > self.min_sequence_len:
+                    return f">{self.name}\n{self.sequence[start:end]}\n"
+                return f""
 
     
     def __lt__(self, other):

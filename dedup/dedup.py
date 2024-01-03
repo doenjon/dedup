@@ -23,7 +23,7 @@ import matplotlib.pyplot as plt
 from concurrent.futures import ProcessPoolExecutor
 
 
-from datasketch import MinHash, MinHashLSH, MinHashLSHEnsemble
+from datasketch import MinHash, MinHashLSHEnsemble
 
 
 from Bio import SeqIO
@@ -105,7 +105,7 @@ class Deduplicator():
             # Deduplication parameters
             self.full_duplication_threshold = 0.9   # Deduplicate whole contig if contig is this duplicated
             self.containment_threshold = 0.2        # Fraction of shared kmers to be considered a match
-            self.end_buffer = 25000 # If deduplication is this close to an edge, deduplicate to the edge 
+            self.end_buffer = 50000 # If deduplication is this close to an edge, deduplicate to the edge 
 
             if params.homozygous_lower_bound and params.homozygous_upper_bound:
                 self.homozygous_lower_bound = params.homozygous_lower_bound
@@ -149,7 +149,8 @@ class Deduplicator():
             alignment_df = self.get_alignment_df(self_alignment, pair[0].name, pair[1].name)
             jobs.append((pair[0], pair[1], alignment_df))
 
-        with Pool(processes=self.threads) as pool:
+        # with Pool(processes=self.threads) as pool:
+        with Pool(processes=1) as pool:
             # Results is a list of tuples, where each tuple is (index_of_contig_to_mark_duplication, (start, end))
             results = pool.starmap(self.dedup_pair, [job for job in jobs])
 
@@ -265,7 +266,7 @@ class Deduplicator():
             hash.update(kmer.encode('utf8'))
         return hash
 
-    def find_candidate_pairs_hash(self, containment_threshold=0.01):
+    def find_candidate_pairs_hash(self, containment_threshold=0.2):
         """
         Find candidate pairs of contigs that potentially contain duplicates.
 
@@ -277,12 +278,12 @@ class Deduplicator():
             list: A list of candidate deduplication pairs, where each pair is a tuple of two contigs.
         """
 
-        lsh = MinHashLSHEnsemble(threshold=containment_threshold, num_perm=128)
+        lsh = MinHashLSHEnsemble(threshold=(containment_threshold/20), num_perm=128)
         hashes = {}
         index = []
 
         print("started pool")
-        with ProcessPoolExecutor() as executor:
+        with ProcessPoolExecutor(max_workers=1) as executor:
             results = list(executor.map(self.get_hash, [c for c in self.contigs]))
         
         print("done with making hashes")
@@ -309,20 +310,22 @@ class Deduplicator():
 
                 if results:
                     for contig_2 in results:
-                        # print(f"Jaccard similarity between {contig} and {contig_2}: {minhash.jaccard(hashes[contig_2])}")
+                        print(f"Jaccard similarity between {contig} and {contig_2}: {minhash.jaccard(hashes[contig_2])}")
                         common_kmers = len(set(contig.homo_dup_kmers) & set(contig_2.homo_dup_kmers))
                         c1_containment = common_kmers / (len(contig.homo_dup_kmers) + 1)
                         c2_containment = common_kmers / (len(contig_2.homo_dup_kmers) + 1)
                         
+                        print(f"c1_containment: {c1_containment}")
+                        print(f"c2_containment: {c2_containment}")
                         # Always make the tuples in the same order
                         if c1_containment > self.containment_threshold or c2_containment > self.containment_threshold:
-                            # print(f"\t\tAdded contig pair to candidates")
+                            print(f"\t\tAdded contig pair to candidates")
                             if contig < contig_2:
                                 candidate_pairs.append((contig, contig_2))
                             else:
                                 candidate_pairs.append((contig_2, contig))
 
-        list(set(candidate_pairs)) # remove duplicates
+        candidate_pairs = list(set(candidate_pairs)) # remove duplicates
         return candidate_pairs
 
     def analyze_kmers(self):
