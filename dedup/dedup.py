@@ -23,8 +23,8 @@ import matplotlib.pyplot as plt
 from Bio import SeqIO
 import plotly.express as px
 
-from dedup.contig import Contig
-from dedup.alignment import Alignment
+from contig import Contig
+from alignment import Alignment
 
 # Set logging
 logging.basicConfig(level=logging.INFO)
