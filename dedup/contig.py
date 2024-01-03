@@ -6,6 +6,9 @@ from logging import handlers
 import numpy as np
 import plotly.express as px
 
+from multiprocessing import Pool, Array
+
+
 logger = logging.getLogger(__name__)
 
 class Contig():
@@ -33,8 +36,8 @@ class Contig():
             self.name = name
             self.sequence = sequence
 
-            self.homo_dup_depth = []
-            self.homo_non_dup_depth = []
+            self.homo_dup_depth = [0] * len(sequence)
+            self.homo_non_dup_depth = [0] * len(sequence)
         
             self.homo_dup_kmers = []
             self.dnd_ratio = []
@@ -60,7 +63,7 @@ class Contig():
                 dnd = 2*dnd - 1
                 self.dnd_ratio.append(dnd)
     
-    def plot_dnd_ratio(self, window=1000):
+    def plot_dnd_ratio(self, window=10000):
             """
             Plots the moving average of the dnd_ratio and saves the plot as an image and HTML file.
 
@@ -81,7 +84,7 @@ class Contig():
                 
             fig = px.scatter(x=pos, y=moving_ave, labels={'x': 'Position', 'y': '% duplicated kmers'})
             fig.write_image(f'results/{self.name}_dnd_ratio.png')
-            fig.write_html(f'results/{self.name}_dnd_ratio.html')
+            # fig.write_html(f'results/{self.name}_dnd_ratio.html')
 
     def get_kmers(self, bam):
         """
@@ -155,5 +158,8 @@ class Contig():
                 return f">{self.name}\n{self.sequence[start:end]}\n"
 
     
+    def __lt__(self, other):
+        return self.name < other.name
+
     def __repr__(self):
         return f"contig: {self.name} ({len(self.sequence)})"
