@@ -31,6 +31,8 @@ import plotly.express as px
 
 from contig import Contig
 from alignment import Alignment
+from contig import Contig
+from alignment import Alignment
 import multiprocessing
 from multiprocessing import Pool, Manager
 import pickle
@@ -361,25 +363,37 @@ class Deduplicator():
         homo_non_dup_bam = self.map_kmers(homo_non_dup_fasta, "homozygous_non_duplicated_mapped")
        
         # Calculate depth of duplicated kmers in contigs
-        homo_dup_depths = self.get_kmer_depth(homo_dup_bam)
-        homo_non_dup_depths = self.get_kmer_depth(homo_non_dup_bam)
+        # homo_dup_depths = self.get_kmer_depth(homo_dup_bam)
+        # homo_non_dup_depths = self.get_kmer_depth(homo_non_dup_bam)
         
         logging.info("Calculating contig statistics")
         
         # Get a map of which kmers are in which contigs
-        kmers_by_contig = self.get_kmers_by_contig(homo_dup_bam)
+        homo_dup_kmers_by_contig = self.get_kmers_by_contig(homo_dup_bam)
+        homo_non_dup_kmers_by_contig = self.get_kmers_by_contig(homo_non_dup_bam)
 
         # Annotate contigs with their kmer information
         for contig in self.contigs:
-            contig.homo_dup_depth = homo_dup_depths[contig.name]
-            contig.homo_non_dup_depth = homo_non_dup_depths[contig.name]
+
+            if contig.name in homo_dup_kmers_by_contig.keys():
+                for pos, kmer in homo_dup_kmers_by_contig[contig.name]:
+                    contig.homo_dup_depth[pos] += 1
+                    contig.homo_dup_kmers.append(kmer)
+
+            if contig.name in homo_non_dup_kmers_by_contig.keys():
+                for pos, kmer in homo_non_dup_kmers_by_contig[contig.name]:
+                    contig.homo_non_dup_depth[pos] += 1
+                    # contig.homo_non_dup_kmers.append(kmer)
+
+            # contig.homo_dup_depth = homo_dup_depths[contig.name]
+            # contig.homo_non_dup_depth = homo_non_dup_depths[contig.name]
             contig.calculate_dnd_ratio()
             # contig.plot_dnd_ratio()
 
-            if contig.name in kmers_by_contig.keys():
-                contig.homo_dup_kmers = kmers_by_contig[contig.name]
-            else:
-                contig.homo_dup_kmers = []
+            # if contig.name in kmers_by_contig.keys():
+            #     contig.homo_dup_kmers = kmers_by_contig[contig.name]
+            # else:
+            #     contig.homo_dup_kmers = []
 
 
     def get_kmers_by_contig(self, bam):
@@ -409,10 +423,12 @@ class Deduplicator():
                 line = line.decode('UTF-8').strip().split()
                 contig_name = line[2]
                 kmer = line[0]
+                pos  = int(line[3])
+
                 try:
-                    kmers_by_contig[contig_name].append(kmer)
+                    kmers_by_contig[contig_name].append((pos, kmer))
                 except:
-                    kmers_by_contig[contig_name] = [kmer]
+                    kmers_by_contig[contig_name] = [(pos, kmer)]
             
             return kmers_by_contig
 
