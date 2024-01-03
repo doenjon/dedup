@@ -236,7 +236,9 @@ class Deduplicator():
                 deduplicate_idx = 1
 
             # If over threshold, deduplicate the whole contig
-            if contig1_percent_duplicated > self.full_duplication_threshold:
+            full_duplication_threshold = 0.9
+            end_buffer = 25000
+            if contig1_percent_duplicated > full_duplication_threshold:
                 contig_to_deduplicate.duplicated = [(0, len(contig_to_deduplicate.sequence))]
 
             # If not over threshold, but close to an edge, deduplicate to the edge
