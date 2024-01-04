@@ -38,7 +38,7 @@ import pickle
 
 # Set logging
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,
     format="%(asctime)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
@@ -346,20 +346,15 @@ class Deduplicator():
             self.homozygous_lower_bound = lower_bound
             self.homozygous_upper_bound = upper_bound
 
-
-        # Filter relevant kmers
-        non_duplicated_kmers = self.filter_kmer_db(assembly_kmer_db, 1, 1)
-        duplicated_kmers = self.filter_kmer_db(assembly_kmer_db, 2, 8) # TODO: generalize to any copy number?
-        homozygous_kmers = self.filter_kmer_db(read_kmer_db, self.homozygous_lower_bound, self.homozygous_upper_bound)
-
+        
         logger.info(f"\ncalculating common kmers")
-        homozygous_duplicated_kmers = list(set(homozygous_kmers) & set(duplicated_kmers))
-        homozygous_non_duplicated_kmers = list(set(homozygous_kmers) & set(non_duplicated_kmers))
+        homozygous_duplicated_kmer_db = self.filter_kmer_db(read_kmer_db, self.homozygous_lower_bound, self.homozygous_upper_bound, assembly_kmer_db, 2, 4)
+        homozygous_non_duplicated_kmer_db = self.filter_kmer_db(read_kmer_db, self.homozygous_lower_bound, self.homozygous_upper_bound, assembly_kmer_db, 1, 1)
 
         # Write kmers to fasta
-        homo_dup_fasta = self.write_kmers(homozygous_duplicated_kmers, "homozygous_duplicated.fasta")
-        homo_non_dup_fasta = self.write_kmers(homozygous_non_duplicated_kmers, "homozygous_non_duplicated.fasta")
-      
+        homo_dup_fasta = self.write_kmers(homozygous_duplicated_kmer_db, "homozygous_duplicated.fasta")
+        homo_non_dup_fasta = self.write_kmers(homozygous_non_duplicated_kmer_db, "homozygous_non_duplicated.fasta")
+
         # Find position of kmers in contigs
         homo_dup_bam = self.map_kmers(homo_dup_fasta, "homozygous_duplicated_mapped")
         homo_non_dup_bam = self.map_kmers(homo_non_dup_fasta, "homozygous_non_duplicated_mapped")
@@ -386,7 +381,7 @@ class Deduplicator():
                 for pos, kmer in homo_non_dup_kmers_by_contig[contig.name]:
                     contig.homo_non_dup_depth[pos] += 1
                     # contig.homo_non_dup_kmers.append(kmer)
-
+            
             # contig.homo_dup_depth = homo_dup_depths[contig.name]
             # contig.homo_non_dup_depth = homo_non_dup_depths[contig.name]
             contig.calculate_dnd_ratio()
@@ -434,7 +429,7 @@ class Deduplicator():
             
             return kmers_by_contig
 
-    def make_kmer_db(self, fasta, db_name, kmer_size=21):
+    def make_kmer_db(self, fasta, db_name, kmer_size=21, lower_bound=1, upper_bound=255):
         '''
         Run jellyfish kmer counting on a genome or read set
 
@@ -446,9 +441,14 @@ class Deduplicator():
         Returns:
             str: Path to the jellyfish count file
         '''
-        db_path = os.path.join(self.tmp_dir, f"{db_name}.jf")
-            
-        cmd = f"jellyfish count -m {kmer_size} -s 1G -t {self.threads} -C {fasta} --output {db_path}"  # TODO: @enhancement add memory opt and bloom filter #TODO: change threading
+        db_path = os.path.join(self.tmp_dir, f"{db_name}_{lower_bound}_{upper_bound}")
+        
+        # multifasta requires aditional param
+        optional_params = ""
+        if fasta.endswith(".fasta") or fasta.endswith(".fa"):
+            optional_params += "-fm"
+
+        cmd = f"kmc -k{kmer_size} -ci{lower_bound} -cs{upper_bound} -r {optional_params} {fasta} {db_path} {self.tmp_dir}"
         logger.info(cmd)
         
         if not os.path.exists(db_path):
@@ -518,7 +518,7 @@ class Deduplicator():
             return alignment_df
 
     
-    def filter_kmer_db(self, kmer_db, lower_bound, upper_bound):
+    def filter_kmer_db(self, read_db, read_lower, read_upper, assembly_db, assembly_lower, assembly_upper):
         '''
         Run jellyfish dump on kmer database
 
@@ -530,8 +530,9 @@ class Deduplicator():
         Returns: 
             list: list of kmers
         '''
-        out_file = os.path.join(self.tmp_dir, f"jf_dump_{lower_bound}_{upper_bound}")
-        cmd = f"jellyfish dump --lower-count {lower_bound} --upper-count {upper_bound} --output {out_file} {kmer_db}"  
+
+        out_file = os.path.join(self.tmp_dir, f"kmc_intersect_{read_lower}_{read_upper}_{assembly_lower}_{assembly_upper}")
+        cmd = f"kmc_tools simple {read_db} -ci{read_lower} -cx{read_upper} {assembly_db} -ci{assembly_lower} -cx{assembly_upper} intersect {out_file}"
         logger.info(cmd)
         if not os.path.exists(out_file):
             p = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT) 
@@ -541,9 +542,7 @@ class Deduplicator():
         else:
             logger.debug(f"\tSkipping because results already exist")
 
-        kmers = self.read_kmers_from_fasta(out_file)
-
-        return kmers
+        return out_file
 
     
     def read_kmers_from_fasta(self, kmer_fasta):
@@ -594,7 +593,7 @@ class Deduplicator():
         return kmers
 
 
-    def write_kmers(self, kmers, outname):
+    def write_kmers(self, kmer_db, outname):
         '''
         Write kmers from a list to a fasta file
 
@@ -607,12 +606,19 @@ class Deduplicator():
         '''
         # open(outfile).write("".join([f">{k}\n{k}\n" for k in kmers]))
         
-        outfile = os.path.join(self.tmp_dir, outname)
+        tmp = os.path.join(self.tmp_dir, f"{outname}.tmp")
+        cmd = f"kmc_dump {kmer_db} {tmp}"
+        p = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT) 
+        retval = p.wait()
+        logger.debug(f"write_kmers ret: {retval}")
+
+        out_file_path = os.path.join(self.tmp_dir, f"{outname}")
+        with open(tmp, 'r') as infile, open(out_file_path, 'w') as outfile:
+            for i, line in enumerate(infile, start=1):
+                sequence, _ = line.strip().split('\t')
+                outfile.write(f'>{sequence}\n{sequence}\n')
         
-        with open(outfile, 'w') as f:
-            f.write("".join([f">{k}\n{k}\n" for k in kmers]))
-        
-        return outfile
+        return out_file_path
 
 
     def map_kmers(self, kmer_fasta, outname):
@@ -748,7 +754,8 @@ class Deduplicator():
 
         """
         histo_file = os.path.join(self.tmp_dir, 'kmer_counts.histo')
-        cmd = f"jellyfish histo {kmer_db} > {histo_file}"  # TODO: @enhancement add memory opt and bloom filter #TODO: change threading
+        # cmd = f"jellyfish histo {kmer_db} > {histo_file}"  # TODO: @enhancement add memory opt and bloom filter #TODO: change threading
+        cmd = f"kmc_tools transform {kmer_db} histogram {histo_file}"
         logger.info(cmd)
             
         if not os.path.exists(histo_file):
