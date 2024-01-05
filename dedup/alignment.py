@@ -42,8 +42,10 @@ class Alignment:
         common_kmers = set(contig1.homo_dup_kmers) & set(contig2.homo_dup_kmers)
         contig1.homo_dup_kmers_pos = [v for v in contig1.homo_dup_kmers_pos if v[1] in common_kmers]
         contig1.calculate_homo_dup_depth()
+        contig1.calculate_dnd_ratio()
         contig2.homo_dup_kmers_pos = [v for v in contig2.homo_dup_kmers_pos if v[1] in common_kmers]
         contig2.calculate_homo_non_dup_depth()
+        contig2.calculate_dnd_ratio()
 
         # print(f"Original PAF length: {len(paf_df)}")
         # Remove overlapping alignments with simplify_paf
