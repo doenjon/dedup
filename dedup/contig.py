@@ -38,6 +38,9 @@ class Contig():
 
             self.homo_dup_depth = [0] * len(sequence)
             self.homo_non_dup_depth = [0] * len(sequence)
+
+            self.homo_dup_kmers_pos = []
+            self.homo_non_dup_kmers_pos = []
         
             self.homo_dup_kmers = []
             self.dnd_ratio = []
@@ -186,7 +189,14 @@ class Contig():
                     return f">{self.name}\n{self.sequence[start:end]}\n"
                 return f""
 
+    def calculate_homo_dup_depth(self):
+        for pos, kmer in self.homo_dup_kmers_pos:
+            self.homo_dup_depth[pos] += 1
     
+    def calculate_homo_non_dup_depth(self):
+        for pos, kmer in self.homo_non_dup_kmers_pos:
+            self.homo_non_dup_depth[pos] += 1
+
     def __lt__(self, other):
         return self.name < other.name
 

@@ -319,7 +319,7 @@ class Deduplicator():
                         # print(f"c2_containment: {c2_containment}")
                         # Always make the tuples in the same order
                         if c1_containment > self.containment_threshold or c2_containment > self.containment_threshold:
-                            logger.debug(f"\t\tAdded contig pair to candidates")
+                            logger.debug(f"\t\tAdded contig pair {contig} - {contig_2} to candidates")
                             if contig < contig_2:
                                 candidate_pairs.append((contig, contig_2))
                             else:
@@ -373,14 +373,22 @@ class Deduplicator():
         for contig in self.contigs:
 
             if contig.name in homo_dup_kmers_by_contig.keys():
+                contig.homo_dup_kmers_pos = homo_dup_kmers_by_contig[contig.name]
+                contig.calculate_homo_dup_depth()
+
+
+                # contig.homo_dup_kmers.append(kmer)
                 for pos, kmer in homo_dup_kmers_by_contig[contig.name]:
-                    contig.homo_dup_depth[pos] += 1
+                    # contig.homo_dup_depth[pos] += 1
                     contig.homo_dup_kmers.append(kmer)
 
             if contig.name in homo_non_dup_kmers_by_contig.keys():
-                for pos, kmer in homo_non_dup_kmers_by_contig[contig.name]:
-                    contig.homo_non_dup_depth[pos] += 1
-                    # contig.homo_non_dup_kmers.append(kmer)
+                contig.homo_non_dup_kmers_pos = homo_non_dup_kmers_by_contig[contig.name]
+                contig.calculate_homo_non_dup_depth()
+
+                # for pos, kmer in homo_non_dup_kmers_by_contig[contig.name]:
+                #     contig.homo_non_dup_depth[pos] += 1
+                #     # contig.homo_non_dup_kmers.append(kmer)
             
             # contig.homo_dup_depth = homo_dup_depths[contig.name]
             # contig.homo_non_dup_depth = homo_non_dup_depths[contig.name]
@@ -451,7 +459,7 @@ class Deduplicator():
         cmd = f"kmc -k{kmer_size} -ci{lower_bound} -cs{upper_bound} -r {optional_params} {fasta} {db_path} {self.tmp_dir}"
         logger.info(cmd)
         
-        if not os.path.exists(db_path):
+        if not os.path.exists(f"{db_path}.kmc_suf"):
             p = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT) 
             retval = p.wait()
             logger.debug(f"make_kmer_db ret: {retval}")
@@ -544,55 +552,6 @@ class Deduplicator():
 
         return out_file
 
-    
-    def read_kmers_from_fasta(self, kmer_fasta):
-        '''
-        Read kmers from a fasta file of kmers
-
-        Args: 
-            kmer_fasta: (str) path to kmer fasta file 
-                
-        Returns: 
-            list: list of kmers
-        '''
-        logger.debug(f"Reading file: {kmer_fasta}")
-        kmers = []
-
-        # read the file fast to make a progress meter...
-        def blocks(files, size=65536):
-            while True:
-                b = files.read(size)
-                if not b: break
-                yield b
-
-        ln_count=0
-        with open(kmer_fasta, "r",encoding="utf-8",errors='ignore') as f:
-            ln_count=sum(bl.count("\n") for bl in blocks(f))
-
-        start_time = datetime.datetime.now()
-        ln_count2=0
-
-        #use mmap to read the file faster
-        with open(kmer_fasta, "r+b") as file:
-
-            m = mmap.mmap(file.fileno(), 0, prot=mmap.PROT_READ) #File is open read-only
-
-            for line in iter(m.readline, b""):	
-                line = line.decode("utf-8").rstrip()
-                ln_count2 += 1
-                if line[0] != ">":
-                    kmers.append(line)
-
-                if ln_count2 % 500000 == 0:
-                    curr_time = datetime.datetime.now()
-                    elapsed = curr_time - start_time
-                    pred = elapsed / (ln_count2/(ln_count))
-                    remaining_time = str(pred - elapsed)
-                    if logger.isEnabledFor(logging.DEBUG):
-                        print(f"{100*ln_count2/(ln_count):.2f}% complete -- Predicted remaining: {remaining_time}", end="\r")
-        return kmers
-
-
     def write_kmers(self, kmer_db, outname):
         '''
         Write kmers from a list to a fasta file
@@ -673,48 +632,6 @@ class Deduplicator():
             contigs.append(contig)
         
         return contigs
-
-    def get_kmer_depth(self, bam):
-            '''
-            get the depth of mapped kmers given an alignment file
-
-            Args:
-                bam (str): sorted bam file containing mapped kmers
-
-            Returns: 
-                dict: A dictionary of depth per contig in the format contig_name:[depth].
-                      The order in the depth list is the nucleotide order in the contig.
-                      The list will be of length contig - len(kmer).
-
-            Raises:
-                FileNotFoundError: If the specified bam file does not exist.
-            '''
-
-            contig_depths = {}
-            outfile = f"{bam}.depth"
-            cmd = f"samtools depth -a {bam} > {outfile}" 
-            logger.info(cmd)
-
-            if not os.path.exists(outfile):
-                p = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT) 
-                retval = p.wait()
-            else:
-                logger.debug(f"\tSkipping because results already exist")
-            
-            with open(outfile, "r") as file:
-                for line in file:
-                    chrom, pos, depth = line.strip().split()
-                    if chrom not in contig_depths.keys():
-                        contig_depths[chrom] = []
-                    contig_depths[chrom].append(int(depth))
-            
-            # if contig not in depth file, set to all zeros
-            for contig in self.contigs:
-                if contig.name not in contig_depths.keys():
-                    contig_depths[contig.name] = [0] * len(contig.sequence)
-                    
-            return contig_depths
-
         
     def get_homozygous_kmer_range(self, kmer_db):
         '''

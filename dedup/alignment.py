@@ -6,6 +6,9 @@ import numpy as np
 
 from contig import Contig
 
+import copy
+
+
 logger = logging.getLogger(__name__)
 
 class Alignment:
@@ -30,9 +33,17 @@ class Alignment:
         - nodes (list): A list of nodes in the alignment graph.
         - max_gap (int): The maximum gap allowed between nodes in the alignment graph.
         """
-        self.contig1 = contig1
-        self.contig2 = contig2
+        #hack
+        self.contig1 = copy.deepcopy(contig1)
+        self.contig2 = copy.deepcopy(contig2)
         self.edges = []
+
+        #hack
+        common_kmers = set(contig1.homo_dup_kmers) & set(contig2.homo_dup_kmers)
+        contig1.homo_dup_kmers_pos = [v for v in contig1.homo_dup_kmers_pos if v[1] in common_kmers]
+        contig1.calculate_homo_dup_depth()
+        contig2.homo_dup_kmers_pos = [v for v in contig2.homo_dup_kmers_pos if v[1] in common_kmers]
+        contig2.calculate_homo_non_dup_depth()
 
         # print(f"Original PAF length: {len(paf_df)}")
         # Remove overlapping alignments with simplify_paf
