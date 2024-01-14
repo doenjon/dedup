@@ -133,18 +133,45 @@ class Deduplicator():
         finding candidate pairs, performing self-alignment, deduplicating pairs, and
         writing the deduplicated contigs to a file.
         '''
+        
+        
+        """     
+        """
         # Collect kmers stats
         self.analyze_kmers()
-
-        # print(f"generating plots")
-        # for contig in self.contigs[1:10]:
-        #     contig.plot_dnd_ratio()
 
         # # Perform whole genome self-alignment
         self_alignment = self.self_alignment()
 
+        # # Pickle self_alignment
+        # with open(os.path.join(self.tmp_dir, "self_alignment.pickle"), "wb") as file:
+        #     pickle.dump(self_alignment, file)
+
+        # # Pickle candidate_pairs
+        # with open(os.path.join(self.tmp_dir, "cotigs.pickle"), "wb") as file:
+        #     pickle.dump(self.contigs, file)
+        
+        # # Unpickle self_alignment
+        # with open(os.path.join(self.tmp_dir, "self_alignment.pickle"), "rb") as file:
+        #     self_alignment = pickle.load(file)
+
+        # # Unpickle candidate_pairs
+        # with open(os.path.join(self.tmp_dir, "cotigs.pickle"), "rb") as file:
+        #     self.contigs = pickle.load(file)
+
+
+
+
         # Find candidate pairs of contigs to deduplicate
         candidate_pairs = self.find_candidate_pairs_hash()
+
+        # candidate_pairs_filtered = ["ctg010230"]
+
+        # candidate_pairs = [c for c in candidate_pairs if c[0].name in candidate_pairs_filtered or c[1].name in candidate_pairs_filtered]
+
+        # for c1, c2 in candidate_pairs:
+        #     c1.plot_dnd_ratio()
+        #     c2.plot_dnd_ratio()
 
         logger.debug(f"candidate_pairs: {candidate_pairs}")
 
@@ -153,8 +180,8 @@ class Deduplicator():
             alignment_df = self.get_alignment_df(self_alignment, pair[0].name, pair[1].name)
             jobs.append((pair[0], pair[1], alignment_df))
 
-        # with Pool(processes=self.threads) as pool:
         with Pool(processes=self.threads) as pool:
+        # with Pool(processes=1) as pool:
             # Results is a list of tuples, where each tuple is (index_of_contig_to_mark_duplication, (start, end))
             results = pool.starmap(self.dedup_pair, [job for job in jobs])
 
@@ -162,7 +189,9 @@ class Deduplicator():
         for pair, result in zip(candidate_pairs, results):
             logging.debug(f"pair: {pair} result: {result}")
             if result:
-                pair[result[0]].duplicated.append(result[1])
+                idx, interval = result
+                pair[idx].duplicated.append(interval)
+                print(pair[idx].duplicated)
 
         with open(f"deduplicated_contigs.fasta", "w") as file:
             for c in self.contigs:
@@ -199,6 +228,7 @@ class Deduplicator():
             contig2_percent_duplicated = (best_alignment["tend"] - best_alignment["tstart"]) / len(contig2.sequence)
             
             logger.debug("--------------------------------------------------------------------------------")
+            logger.debug(f"Deduplicating {contig1} and {contig2}")
             logger.debug(f"{contig1} is {100*contig1_percent_duplicated:.2f}% duplicated by alignment")
             logger.debug(f"{contig2} is {100*contig2_percent_duplicated:.2f}% duplicated by alignment")
            
@@ -319,7 +349,7 @@ class Deduplicator():
                         # print(f"c2_containment: {c2_containment}")
                         # Always make the tuples in the same order
                         if c1_containment > self.containment_threshold or c2_containment > self.containment_threshold:
-                            logger.debug(f"\t\tAdded contig pair to candidates")
+                            logger.debug(f"Added contig pair {contig} - {contig_2} to candidates")
                             if contig < contig_2:
                                 candidate_pairs.append((contig, contig_2))
                             else:
@@ -337,8 +367,8 @@ class Deduplicator():
             str: The filepath of the BAM file containing the mapped homozygous duplicated kmers.
         """
         # Count kmers
-        read_kmer_db = self.make_kmer_db(self.reads, "reads")
-        assembly_kmer_db = self.make_kmer_db(self.assembly, "assembly")
+        read_kmer_db = self.make_kmer_db(self.reads, "reads", self.kmer_size)
+        assembly_kmer_db = self.make_kmer_db(self.assembly, "assembly", self.kmer_size)
 
         # Calculate homozygous kmer range, if not set by user
         if not self.homozygous_lower_bound or not self.homozygous_upper_bound:
@@ -406,7 +436,7 @@ class Deduplicator():
             """
 
             logger.info(f"reading bam: {bam} for kmers")
-            cmd = f"samtools view {bam} -@ 8"  
+            cmd = f"samtools view {bam} -@ {self.threads}"  
             logger.info(cmd)
             proc = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE)
 
@@ -429,7 +459,7 @@ class Deduplicator():
             
             return kmers_by_contig
 
-    def make_kmer_db(self, fasta, db_name, kmer_size=21, lower_bound=1, upper_bound=255):
+    def make_kmer_db(self, fasta, db_name, kmer_size, lower_bound=1, upper_bound=255):
         '''
         Run jellyfish kmer counting on a genome or read set
 
@@ -451,7 +481,7 @@ class Deduplicator():
         cmd = f"kmc -k{kmer_size} -ci{lower_bound} -cs{upper_bound} -r {optional_params} {fasta} {db_path} {self.tmp_dir}"
         logger.info(cmd)
         
-        if not os.path.exists(db_path):
+        if not os.path.exists("f{db_path}.kmc_suf"):
             p = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT) 
             retval = p.wait()
             logger.debug(f"make_kmer_db ret: {retval}")
@@ -508,6 +538,8 @@ class Deduplicator():
             alignment_df["qend"] = alignment_df["qend"].astype(int)
             alignment_df["tstart"] = alignment_df["tstart"].astype(int)
             alignment_df["tend"] = alignment_df["tend"].astype(int)
+            alignment_df["nmatch"] = alignment_df["nmatch"].astype(int)
+
 
             return alignment_df
         
@@ -644,8 +676,8 @@ class Deduplicator():
 
         cmd = f'''
         bwa mem -t {self.threads} -k {self.kmer_size} -T {self.kmer_size} -a -c 500 {self.assembly} {kmer_fasta} > {basename}.sam
-        samtools view -@ 8 -b {basename}.sam > {basename}.bam
-        samtools sort -@ 8 -m 1G {basename}.bam > {basename}.sorted.bam
+        samtools view -@ {self.threads} -b {basename}.sam > {basename}.bam
+        samtools sort -@ {self.threads} -m 1G {basename}.bam > {basename}.sorted.bam
         samtools index {basename}.sorted.bam
         '''
 
@@ -733,8 +765,8 @@ class Deduplicator():
         # Fit model to kmer spectrum
         mean_homo, std_homo = self.fit_kmer_spectrum(kmer_histo_data)
 
-        lower_bound = int(mean_homo - std_homo)
-        upper_bound = int(mean_homo + std_homo)
+        lower_bound = int(mean_homo - 2*std_homo)
+        upper_bound = int(mean_homo + 2*std_homo)
         
         logger.info(f"Set homozygous kmer range to ({lower_bound}, {upper_bound})")
         return (lower_bound, upper_bound)
@@ -825,6 +857,9 @@ class Deduplicator():
         fitted_curve = bimodal(x_vals, params[0], params[1], params[2], params[3], params[4])
         plt.plot(x_vals, fitted_curve, color='red', label='Fitted Gaussian Curve')
 
+        # Set the x label to show only 1 in 10 labels
+        plt.xticks(np.arange(0, len(data), 10))
+
         plt.legend()
 
         output_file = 'kmer_spectrum_fit.png'  
@@ -859,7 +894,7 @@ def parse_args():
     
     parser.add_argument('--kmer_size', 
                         type=int, 
-                        default=21,
+                        default=17,
                         help='genome to deduplicate', 
                         required=False)
 

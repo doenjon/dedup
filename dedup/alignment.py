@@ -34,10 +34,12 @@ class Alignment:
         self.contig2 = contig2
         self.edges = []
 
-        # print(f"Original PAF length: {len(paf_df)}")
+        # logger.debug(f"Original PAF length: {len(paf_df)}")
+        # logger.debug(f"Original PAF: {paf_df}")
         # Remove overlapping alignments with simplify_paf
         paf_df = self.simplify_paf(paf_df)
-        # print(f"New PAF length: {len(paf_df)}")
+        # logger.debug(f"New PAF length: {len(paf_df)}")
+        # logger.debug(f"New PAF: {paf_df}")
 
         self.nodes = self.parse_paf(paf_df)
         self.max_gap = 100000
@@ -113,10 +115,18 @@ class Alignment:
         Returns:
             A tuple containing the score of the best alignment path and the list of nodes in the path.
         """
+
+        # logger.debug(f"{string}Starting search from {node}")
         # base case - node has no parents
         if node.parents == []:
+            # logger.debug(f"{string}{node} has no parents")
+
             path = [node]
+            # logger.debug(f"{string}best path is {path} with score {node.score}")
+
             return node.score, path
+
+        # logger.debug(f"{string}{node} has {len(node.parents)} parents")
 
         # recursive case - node has parents. Find the best path recursively for each parent
         best_path = []
@@ -131,10 +141,13 @@ class Alignment:
             if new_score > score:
                 score = new_score
                 best_path = new_path
-        
+    
         # add current node to the best path and score
         score += node.score
         best_path.append(node)
+        
+        # logger.debug(f"{string}best path is {best_path} with score {score}")
+
 
         return score, best_path
             
@@ -156,18 +169,29 @@ class Alignment:
                 contig2_start = row['tstart']
                 contig2_end = row['tend']
                 direction = row['strand']
+                matching = row['nmatch']
 
                 # score is average dnd_ratio of the segment weighted by length
-                score = (contig1_end-contig1_start)*np.nanmean(self.contig1.dnd_ratio[contig1_start:contig1_end]) + \
-                        (contig2_end-contig2_start)*np.nanmean(self.contig2.dnd_ratio[contig2_start:contig2_end])
+                c1_dnd_score = (contig1_end-contig1_start)*np.nanmean(self.contig1.dnd_ratio[contig1_start:contig1_end])
+                if np.isnan(c1_dnd_score):
+                    c1_dnd_score = 0
 
-                if np.isnan(score):
-                    score = 0
+                c2_dnd_score = (contig2_end-contig2_start)*np.nanmean(self.contig2.dnd_ratio[contig2_start:contig2_end])
+                if np.isnan(c2_dnd_score):  
+                    c2_dnd_score = 0
 
-                node = Node(contig1_start, contig1_end, contig2_start, contig2_end, direction, score)
+                # only consider alignments with duplicated kmers
+                if c1_dnd_score >= 0 and c2_dnd_score >= 0:
 
-                nodes.append(node)
-            
+                    # add bonus for matching bases
+                    matching_score = 0.5 * matching
+
+                    score = c1_dnd_score + c2_dnd_score + matching_score
+
+                    node = Node(contig1_start, contig1_end, contig2_start, contig2_end, direction, score)
+                
+                    nodes.append(node)
+
             return nodes
     
     def create_DAG(self):
@@ -193,25 +217,34 @@ class Alignment:
                         node2.contig1_start - node1.contig1_end < self.max_gap and \
                         node2.contig2_start - node1.contig2_end < self.max_gap:
 
-                        contig_1_start = min(node1.contig1_end,node2.contig1_start)
-                        contig_1_end = max(node1.contig1_end,node2.contig1_start)
-                        contig_2_start = min(node1.contig2_end,node2.contig2_start)
-                        contig_2_end = max(node1.contig2_end,node2.contig2_start)
+                        contig_1_start = node1.contig1_end
+                        contig_1_end = node2.contig1_start
+                        contig_2_start = node1.contig2_end
+                        contig_2_end = node2.contig2_start
 
                         # Calculate edge score
                         contig1_mean_dnd = 0 if (contig_1_end - contig_1_start) == 0 else np.nanmean(self.contig1.dnd_ratio[contig_1_start:contig_1_end])
                         contig2_mean_dnd = 0 if (contig_2_end - contig_2_start) == 0 else np.nanmean(self.contig2.dnd_ratio[contig_2_start:contig_2_end])
-                        score = (node2.contig1_start - node1.contig1_end) * contig1_mean_dnd + \
-                                (node2.contig2_start - node1.contig2_end) * contig2_mean_dnd
+                        score = (contig_1_end - contig_1_start) * contig1_mean_dnd + \
+                                (contig_2_end - contig_2_start) * contig2_mean_dnd
 
-                        if np.isnan(score):
-                            score = 0
+                        c1_dnd_score = (contig_1_end - contig_1_start) * contig1_mean_dnd
+                        if np.isnan(c1_dnd_score):
+                            c1_dnd_score = 0
 
-                        edge = Edge(node1, node2, score)
+                        c2_dnd_score = (contig_2_end - contig_2_start) * contig2_mean_dnd
+                        if np.isnan(c2_dnd_score):
+                            c2_dnd_score = 0
+                        
+                        # only make edges that have duplicated kmers
+                        if c1_dnd_score >= 0 and c2_dnd_score >= 0:
 
-                        node1.children.append(edge)
-                        node2.parents.append(edge)
-                        self.edges.append(edge)
+                            score = c1_dnd_score + c2_dnd_score
+                            edge = Edge(node1, node2, score)
+
+                            node1.children.append(edge)
+                            node2.parents.append(edge)
+                            self.edges.append(edge)
 
                 # Handle reverse alignment
                 elif node2.direction == node1.direction == "-":
@@ -221,27 +254,59 @@ class Alignment:
                         node2.contig1_start - node1.contig1_end < self.max_gap and \
                         node1.contig2_start - node2.contig2_end < self.max_gap:
                         
-                        contig_1_start = min(node1.contig1_end,node2.contig1_start)
-                        contig_1_end = max(node1.contig1_end,node2.contig1_start)
-                        contig_2_start = min(node1.contig2_end,node2.contig2_start)
-                        contig_2_end = max(node1.contig2_end,node2.contig2_start)
+                        contig_1_start = node1.contig1_end
+                        contig_1_end = node2.contig1_start
+                        contig_2_start = node2.contig2_end
+                        contig_2_end = node1.contig2_start
                         
                         # Calculate edge score
                         contig1_mean_dnd = 0 if (contig_1_end - contig_1_start) == 0 else np.nanmean(self.contig1.dnd_ratio[contig_1_start:contig_1_end])
                         contig2_mean_dnd = 0 if (contig_2_end - contig_2_start) == 0 else np.nanmean(self.contig2.dnd_ratio[contig_2_start:contig_2_end])
-                        score = (node1.contig1_end - node2.contig1_start) * contig1_mean_dnd + \
-                                (node1.contig2_end - node2.contig2_start) * contig2_mean_dnd
                         
-                        if np.isnan(score):
-                            score = 0
+                    
+                        c1_dnd_score = (contig_1_end - contig_1_start) * contig1_mean_dnd
+                        if np.isnan(c1_dnd_score):
+                            c1_dnd_score = 0
 
-                        edge = Edge(node1, node2, score)
+                        c2_dnd_score = (contig_2_end - contig_2_start) * contig2_mean_dnd
+                        if np.isnan(c2_dnd_score):
+                            c2_dnd_score = 0
+                        
+                        # only make edges that have duplicated kmers
+                        if c1_dnd_score >= 0 and c2_dnd_score >= 0:
+                            
+                            score = c1_dnd_score + c2_dnd_score
 
-                        node1.children.append(edge)
-                        node2.parents.append(edge)
-                        self.edges.append(edge)
+                            edge = Edge(node1, node2, score)
 
-        logger.debug(f"Created DAG with {len(self.nodes)} nodes and {len(self.edges)} edges")  
+                            node1.children.append(edge)
+                            node2.parents.append(edge)
+                            self.edges.append(edge)
+                        
+                        
+                        # score = (contig_1_end - contig_1_start) * contig1_mean_dnd + \
+                        #         (contig_2_end - contig_2_start) * contig2_mean_dnd
+                        
+                        # if np.isnan(score):
+                        #     score = 0
+
+                        # edge = Edge(node1, node2, score)
+
+                        # if edge.score >= 0:
+                        #     node1.children.append(edge)
+                        #     node2.parents.append(edge)
+                        #     self.edges.append(edge)
+
+                        # node1.children.append(edge)
+                        # node2.parents.append(edge)
+                        # self.edges.append(edge)
+
+        logger.debug(f"Created DAG with {len(self.nodes)} nodes and {len(self.edges)} edges") 
+
+        for n in self.nodes:
+            logger.debug(f"\t{n}")
+        for e in self.edges:
+            logger.debug(f"\t{e}")
 
     def simplify_paf(self, paf_df):
             """

@@ -59,11 +59,17 @@ class Contig():
             if self.homo_dup_depth[pos] == 0 and self.homo_non_dup_depth[pos] == 0:
                 self.dnd_ratio.append(np.nan) # TODO: find a better way to handle no data
             else:
-                # ie. percent of homozygous kmers that are duplicated
-                dnd = self.homo_dup_depth[pos] / (self.homo_dup_depth[pos] + self.homo_non_dup_depth[pos])
-                # normalize to [-1,1]
-                dnd = 2*dnd - 1
+
+                # 
+                dnd = self.homo_dup_depth[pos] - self.homo_non_dup_depth[pos]
                 self.dnd_ratio.append(dnd)
+
+                # Old Score
+                # # ie. percent of homozygous kmers that are duplicated
+                # dnd = self.homo_dup_depth[pos] / (self.homo_dup_depth[pos] + self.homo_non_dup_depth[pos])
+                # # normalize to [-1,1]
+                # dnd = 2*dnd - 1
+                # self.dnd_ratio.append(dnd)
     
     def plot_dnd_ratio(self, window=10000):
             """
