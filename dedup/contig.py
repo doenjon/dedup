@@ -62,11 +62,17 @@ class Contig():
             if self.homo_dup_depth[pos] == 0 and self.homo_non_dup_depth[pos] == 0:
                 self.dnd_ratio.append(np.nan) # TODO: find a better way to handle no data
             else:
-                # ie. percent of homozygous kmers that are duplicated
-                dnd = self.homo_dup_depth[pos] / (self.homo_dup_depth[pos] + self.homo_non_dup_depth[pos])
-                # normalize to [-1,1]
-                dnd = 2*dnd - 1
+
+                # 
+                dnd = self.homo_dup_depth[pos] - self.homo_non_dup_depth[pos]
                 self.dnd_ratio.append(dnd)
+
+                # Old Score
+                # # ie. percent of homozygous kmers that are duplicated
+                # dnd = self.homo_dup_depth[pos] / (self.homo_dup_depth[pos] + self.homo_non_dup_depth[pos])
+                # # normalize to [-1,1]
+                # dnd = 2*dnd - 1
+                # self.dnd_ratio.append(dnd)
     
     def plot_dnd_ratio(self, window=10000):
             """
@@ -144,7 +150,7 @@ class Contig():
 
             if not self.duplicated:
                 logger.debug(f"{self.name} -- 0 out of {tdk} kmers duplicated removed. 0 out of {tndk} non_duplicated kmers removed.")
-                return f">{self.name}\n{self.sequence}\n"
+                return f">{self.name}\n{self.sequence}\n", [0, tdk, 0, tndk]
             else:
 
                 # # If completely duplicated
@@ -162,7 +168,7 @@ class Contig():
                         except ZeroDivisionError:
                             logger.debug(f"{self.name} -- {tdk} out of {tdk} duplicated kmers removed. {tndk} out of {tndk} non_duplicated kmers removed. dnd dedup ratio is {(tdk / (tndk + 1)):.2f}")
                         
-                        return ""
+                        return "",  [tdk, tdk, tndk, tndk]
 
                 # Otherwise, find start and end of non-duplicated sequence
                 # get 5' start
@@ -186,8 +192,8 @@ class Contig():
 
                 # Only report sequence if over minimum sequence length
                 if len(self.sequence[start:end]) > self.min_sequence_len:
-                    return f">{self.name}\n{self.sequence[start:end]}\n"
-                return f""
+                    return f">{self.name}\n{self.sequence[start:end]}\n",  [removed_dup, tdk, removed_ndup, tndk]
+                return "",  [tdk, tdk, tndk, tndk]
 
     def calculate_homo_dup_depth(self):
         for pos, kmer in self.homo_dup_kmers_pos:
