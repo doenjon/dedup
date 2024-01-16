@@ -33,7 +33,10 @@ class Alignment:
         self.contig1 = contig1
         self.contig2 = contig2
         self.edges = []
-
+       
+        self.max_gap = 100000
+        self.match_weight = 0.2
+        self.aln_coverage = 0.1
         # logger.debug(f"Original PAF length: {len(paf_df)}")
         # logger.debug(f"Original PAF: {paf_df}")
         # Remove overlapping alignments with simplify_paf
@@ -42,9 +45,7 @@ class Alignment:
         # logger.debug(f"New PAF: {paf_df}")
 
         self.nodes = self.parse_paf(paf_df)
-        self.max_gap = 100000
-        self.match_weight = 0.2
-        self.aln_coverage = 0.1
+
 
     def find_best_alignment(self):
         """
