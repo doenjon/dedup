@@ -43,6 +43,8 @@ class Alignment:
 
         self.nodes = self.parse_paf(paf_df)
         self.max_gap = 100000
+        self.match_weight = 0.2
+        self.aln_coverage = 0.1
 
     def find_best_alignment(self):
         """
@@ -99,7 +101,7 @@ class Alignment:
             tstart = end_node.contig2_start
             tend = start_node.contig2_end
 
-        result = {"qstart": qstart, "qend": qend, "tstart": tstart, "tend": tend}
+        result = {"qstart": qstart, "qend": qend, "tstart": tstart, "tend": tend, "direction": start_node.direction}
         logger.debug(f"Best alignment: {result}")
 
         return result
@@ -170,6 +172,7 @@ class Alignment:
                 contig2_end = row['tend']
                 direction = row['strand']
                 matching = row['nmatch']
+                alen = row['alen']
 
                 # score is average dnd_ratio of the segment weighted by length
                 c1_dnd_score = (contig1_end-contig1_start)*np.nanmean(self.contig1.dnd_ratio[contig1_start:contig1_end])
@@ -180,13 +183,15 @@ class Alignment:
                 if np.isnan(c2_dnd_score):  
                     c2_dnd_score = 0
 
-                # only consider alignments with duplicated kmers
-                if c1_dnd_score >= 0 and c2_dnd_score >= 0:
+                # only consider alignments with a substantial number of duplicated kmers
+                c1_deuplication_threshold = self.aln_coverage * (contig1_end - contig1_start)
+                c2_deuplication_threshold = self.aln_coverage * (contig2_end - contig2_start)
+                if c1_dnd_score >= c1_deuplication_threshold and c2_dnd_score >= c2_deuplication_threshold:
 
                     # add bonus for matching bases
-                    matching_score = 0.5 * matching
+                    matching_score = 2*matching - alen # number matching - number not matching
 
-                    score = c1_dnd_score + c2_dnd_score + matching_score
+                    score = c1_dnd_score + c2_dnd_score + self.match_weight * matching_score
 
                     node = Node(contig1_start, contig1_end, contig2_start, contig2_end, direction, score)
                 
@@ -217,6 +222,8 @@ class Alignment:
                         node2.contig1_start - node1.contig1_end < self.max_gap and \
                         node2.contig2_start - node1.contig2_end < self.max_gap:
 
+
+
                         contig_1_start = node1.contig1_end
                         contig_1_end = node2.contig1_start
                         contig_2_start = node1.contig2_end
@@ -231,20 +238,51 @@ class Alignment:
                         c1_dnd_score = (contig_1_end - contig_1_start) * contig1_mean_dnd
                         if np.isnan(c1_dnd_score):
                             c1_dnd_score = 0
+                        
+                        # Count gap as unaligned sequence, give appropritae negative score
+                        c1_score = c1_dnd_score - self.match_weight * (contig_1_end - contig_1_start)
 
                         c2_dnd_score = (contig_2_end - contig_2_start) * contig2_mean_dnd
                         if np.isnan(c2_dnd_score):
                             c2_dnd_score = 0
                         
-                        # only make edges that have duplicated kmers
-                        if c1_dnd_score >= 0 and c2_dnd_score >= 0:
+                        c2_score = c2_dnd_score - self.match_weight * (contig_2_end - contig_2_start)
+                        
+                        # # only make edges that have duplicated kmers if the edge isn't trivally short
+                        # trivial_edge_length = 1000
+                        # default_edge_threshold = -10
+                        # if contig_1_end - contig_1_start > trivial_edge_length:
+                        #     c1_deuplication_threshold = 0.1 * (contig_1_end - contig_1_start)
+                        # else:
+                        #     c1_deuplication_threshold = default_edge_threshold
+                        
+                        # if contig_2_end - contig_2_start > trivial_edge_length:
+                        #     c2_deuplication_threshold = 0.1 * (contig_2_end - contig_2_start)
+                        # else:
+                        #     c2_deuplication_threshold = default_edge_threshold
+    
+                        # print(f"trying to make edge between nodes: {node1} and {node2}")
 
-                            score = c1_dnd_score + c2_dnd_score
-                            edge = Edge(node1, node2, score)
+                        # print(f"contig_1_start: {contig_1_start}")
+                        # print(f"contig_1_end: {contig_1_end}")  
+                        # print(f"contig_2_start: {contig_2_start}")
+                        # print(f"contig_2_end: {contig_2_end}")
 
-                            node1.children.append(edge)
-                            node2.parents.append(edge)
-                            self.edges.append(edge)
+                        # print(f"c1_dnd_score: {c1_dnd_score}")
+                        # print(f"c2_dnd_score: {c2_dnd_score}")
+                        # print(f"c1_deuplication_threshold: {c1_deuplication_threshold}")
+                        # print(f"c2_deuplication_threshold: {c2_deuplication_threshold}")
+
+                        # if c1_dnd_score >= c1_deuplication_threshold and c2_dnd_score >= c2_deuplication_threshold:
+                        print("making edge")
+                        score = c1_score + c2_score
+                        edge = Edge(node1, node2, score)
+
+                        node1.children.append(edge)
+                        node2.parents.append(edge)
+                        self.edges.append(edge)
+                        # else:
+                        #     print("not making edge")
 
                 # Handle reverse alignment
                 elif node2.direction == node1.direction == "-":
@@ -267,21 +305,51 @@ class Alignment:
                         c1_dnd_score = (contig_1_end - contig_1_start) * contig1_mean_dnd
                         if np.isnan(c1_dnd_score):
                             c1_dnd_score = 0
+                        
+                        # Count gap as unaligned sequence, give appropritae negative score
+                        c1_score = c1_dnd_score - self.match_weight * (contig_1_end - contig_1_start)
 
                         c2_dnd_score = (contig_2_end - contig_2_start) * contig2_mean_dnd
                         if np.isnan(c2_dnd_score):
                             c2_dnd_score = 0
                         
-                        # only make edges that have duplicated kmers
-                        if c1_dnd_score >= 0 and c2_dnd_score >= 0:
-                            
-                            score = c1_dnd_score + c2_dnd_score
+                        c2_score = c2_dnd_score - self.match_weight * (contig_2_end - contig_2_start)
 
-                            edge = Edge(node1, node2, score)
+                        
+                        # trivial_edge_length = 1000
+                        # default_edge_threshold = -10
+                        # if contig_1_end - contig_1_start > trivial_edge_length:
+                        #     c1_deuplication_threshold = 0.1 * (contig_1_end - contig_1_start)
+                        # else:
+                        #     c1_deuplication_threshold = default_edge_threshold
+                        
+                        # if contig_2_end - contig_2_start > trivial_edge_length:
+                        #     c2_deuplication_threshold = 0.1 * (contig_2_end - contig_2_start)
+                        # else:
+                        #     c2_deuplication_threshold = default_edge_threshold
+    
+                        # print(f"trying to make edge between nodes: {node1} and {node2}")
 
-                            node1.children.append(edge)
-                            node2.parents.append(edge)
-                            self.edges.append(edge)
+                        # print(f"contig_1_start: {contig_1_start}")
+                        # print(f"contig_1_end: {contig_1_end}")  
+                        # print(f"contig_2_start: {contig_2_start}")
+                        # print(f"contig_2_end: {contig_2_end}")
+
+                        # print(f"c1_dnd_score: {c1_dnd_score}")
+                        # print(f"c2_dnd_score: {c2_dnd_score}")
+                        # print(f"c1_deuplication_threshold: {c1_deuplication_threshold}")
+                        # print(f"c2_deuplication_threshold: {c2_deuplication_threshold}")
+
+                        # if c1_dnd_score >= c1_deuplication_threshold and c2_dnd_score >= c2_deuplication_threshold:
+                            # print("making edge")
+                        score = c1_score + c2_score
+                        edge = Edge(node1, node2, score)
+
+                        node1.children.append(edge)
+                        node2.parents.append(edge)
+                        self.edges.append(edge)
+                        # else:
+                            # print("not making edge")
                         
                         
                         # score = (contig_1_end - contig_1_start) * contig1_mean_dnd + \

@@ -147,7 +147,7 @@ class Contig():
 
             if not self.duplicated:
                 logger.debug(f"{self.name} -- 0 out of {tdk} kmers duplicated removed. 0 out of {tndk} non_duplicated kmers removed.")
-                return f">{self.name}\n{self.sequence}\n"
+                return f">{self.name}\n{self.sequence}\n", [0, tdk, 0, tndk]
             else:
 
                 # # If completely duplicated
@@ -165,7 +165,7 @@ class Contig():
                         except ZeroDivisionError:
                             logger.debug(f"{self.name} -- {tdk} out of {tdk} duplicated kmers removed. {tndk} out of {tndk} non_duplicated kmers removed. dnd dedup ratio is {(tdk / (tndk + 1)):.2f}")
                         
-                        return ""
+                        return "",  [tdk, tdk, tndk, tndk]
 
                 # Otherwise, find start and end of non-duplicated sequence
                 # get 5' start
@@ -189,8 +189,8 @@ class Contig():
 
                 # Only report sequence if over minimum sequence length
                 if len(self.sequence[start:end]) > self.min_sequence_len:
-                    return f">{self.name}\n{self.sequence[start:end]}\n"
-                return f""
+                    return f">{self.name}\n{self.sequence[start:end]}\n",  [removed_dup, tdk, removed_ndup, tndk]
+                return "",  [tdk, tdk, tndk, tndk]
 
     
     def __lt__(self, other):
