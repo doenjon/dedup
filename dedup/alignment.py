@@ -63,12 +63,7 @@ class Alignment:
         self.max_gap = 250000
         self.match_weight = 0.2
         self.aln_coverage = 0
-        # logger.debug(f"Original PAF length: {len(paf_df)}")
-        # logger.debug(f"Original PAF: {paf_df}")
-        # Remove overlapping alignments with simplify_paf
-        # paf_df = self.simplify_paf(paf_df)
-        # logger.debug(f"New PAF length: {len(paf_df)}")
-        # logger.debug(f"New PAF: {paf_df}")
+        
 
         self.nodes = self.parse_paf(paf_df)
 
@@ -131,8 +126,8 @@ class Alignment:
 
         # logger.debug(f"Before polishing alignment (qstart, qend, tstart, tend): {qstart}, {qend}, {tstart}, {tend}")
 
-        qstart, tstart = self.polish_alignment(qstart, tstart, mode="start")
-        qend, tend = self.polish_alignment(qend, tend, mode="end")
+        # qstart, tstart = self.polish_alignment(qstart, tstart, mode="start")
+        # qend, tend = self.polish_alignment(qend, tend, mode="end")
 
         # if qstart > qend:
         #     logger.ERROR(f"qstart > qend for contig {self.contig1.name}")
@@ -298,7 +293,7 @@ class Alignment:
         for node1 in self.nodes:
             for node2 in self.nodes:
 
-                
+                make_edge = False
                 # Forward and reverse alignments have different logic
                 if node2.direction == node1.direction == "+":
 
@@ -322,54 +317,7 @@ class Alignment:
                         score = (contig_1_end - contig_1_start) * contig1_mean_dnd + \
                                 (contig_2_end - contig_2_start) * contig2_mean_dnd
 
-                        c1_dnd_score = (contig_1_end - contig_1_start) * contig1_mean_dnd
-                        if np.isnan(c1_dnd_score):
-                            c1_dnd_score = 0
-                        
-                        # Count gap as unaligned sequence, give appropritae negative score
-                        c1_score = c1_dnd_score #- self.match_weight * (contig_1_end - contig_1_start)
-
-                        c2_dnd_score = (contig_2_end - contig_2_start) * contig2_mean_dnd
-                        if np.isnan(c2_dnd_score):
-                            c2_dnd_score = 0
-                        
-                        c2_score = c2_dnd_score #- self.match_weight * (contig_2_end - contig_2_start)
-                        
-                        # # only make edges that have duplicated kmers if the edge isn't trivally short
-                        # trivial_edge_length = 1000
-                        # default_edge_threshold = -10
-                        # if contig_1_end - contig_1_start > trivial_edge_length:
-                        #     c1_deuplication_threshold = 0.1 * (contig_1_end - contig_1_start)
-                        # else:
-                        #     c1_deuplication_threshold = default_edge_threshold
-                        
-                        # if contig_2_end - contig_2_start > trivial_edge_length:
-                        #     c2_deuplication_threshold = 0.1 * (contig_2_end - contig_2_start)
-                        # else:
-                        #     c2_deuplication_threshold = default_edge_threshold
-    
-                        # print(f"trying to make edge between nodes: {node1} and {node2}")
-
-                        # print(f"contig_1_start: {contig_1_start}")
-                        # print(f"contig_1_end: {contig_1_end}")  
-                        # print(f"contig_2_start: {contig_2_start}")
-                        # print(f"contig_2_end: {contig_2_end}")
-
-                        # print(f"c1_dnd_score: {c1_dnd_score}")
-                        # print(f"c2_dnd_score: {c2_dnd_score}")
-                        # print(f"c1_deuplication_threshold: {c1_deuplication_threshold}")
-                        # print(f"c2_deuplication_threshold: {c2_deuplication_threshold}")
-
-                        # if c1_dnd_score >= c1_deuplication_threshold and c2_dnd_score >= c2_deuplication_threshold:
-                        print("making edge")
-                        score = c1_score + c2_score
-                        edge = Edge(node1, node2, score)
-
-                        node1.children.append(edge)
-                        node2.parents.append(edge)
-                        self.edges.append(edge)
-                        # else:
-                        #     print("not making edge")
+                        make_edge = True
 
                 # Handle reverse alignment
                 elif node2.direction == node1.direction == "-":
@@ -390,74 +338,28 @@ class Alignment:
                         contig1_mean_dnd = 0 if (contig_1_end - contig_1_start) == 0 else np.nanmean(self.contig1_dnd[contig_1_start:contig_1_end])
                         contig2_mean_dnd = 0 if (contig_2_end - contig_2_start) == 0 else np.nanmean(self.contig2_dnd[contig_2_start:contig_2_end])
                         
+                        make_edge = True
+
+                if make_edge:
+
+                    c1_dnd_score = (contig_1_end - contig_1_start) * contig1_mean_dnd
+                    if np.isnan(c1_dnd_score):
+                        c1_dnd_score = 0
                     
-                        c1_dnd_score = (contig_1_end - contig_1_start) * contig1_mean_dnd
-                        if np.isnan(c1_dnd_score):
-                            c1_dnd_score = 0
+
+                    c2_dnd_score = (contig_2_end - contig_2_start) * contig2_mean_dnd
+                    if np.isnan(c2_dnd_score):
+                        c2_dnd_score = 0
+                    
+                    
+                    score = c1_dnd_score + c2_dnd_score
+                    edge = Edge(node1, node2, score)
+
+                    node1.children.append(edge)
+                    node2.parents.append(edge)
+                    self.edges.append(edge)
+                    
                         
-                        # Count gap as unaligned sequence, give appropritae negative score
-                        c1_score = c1_dnd_score - self.match_weight * (contig_1_end - contig_1_start)
-
-                        c2_dnd_score = (contig_2_end - contig_2_start) * contig2_mean_dnd
-                        if np.isnan(c2_dnd_score):
-                            c2_dnd_score = 0
-                        
-                        c2_score = c2_dnd_score - self.match_weight * (contig_2_end - contig_2_start)
-
-                        
-                        # trivial_edge_length = 1000
-                        # default_edge_threshold = -10
-                        # if contig_1_end - contig_1_start > trivial_edge_length:
-                        #     c1_deuplication_threshold = 0.1 * (contig_1_end - contig_1_start)
-                        # else:
-                        #     c1_deuplication_threshold = default_edge_threshold
-                        
-                        # if contig_2_end - contig_2_start > trivial_edge_length:
-                        #     c2_deuplication_threshold = 0.1 * (contig_2_end - contig_2_start)
-                        # else:
-                        #     c2_deuplication_threshold = default_edge_threshold
-    
-                        # print(f"trying to make edge between nodes: {node1} and {node2}")
-
-                        # print(f"contig_1_start: {contig_1_start}")
-                        # print(f"contig_1_end: {contig_1_end}")  
-                        # print(f"contig_2_start: {contig_2_start}")
-                        # print(f"contig_2_end: {contig_2_end}")
-
-                        # print(f"c1_dnd_score: {c1_dnd_score}")
-                        # print(f"c2_dnd_score: {c2_dnd_score}")
-                        # print(f"c1_deuplication_threshold: {c1_deuplication_threshold}")
-                        # print(f"c2_deuplication_threshold: {c2_deuplication_threshold}")
-
-                        # if c1_dnd_score >= c1_deuplication_threshold and c2_dnd_score >= c2_deuplication_threshold:
-                            # print("making edge")
-                        score = c1_score + c2_score
-                        edge = Edge(node1, node2, score)
-
-                        node1.children.append(edge)
-                        node2.parents.append(edge)
-                        self.edges.append(edge)
-                        # else:
-                            # print("not making edge")
-                        
-                        
-                        # score = (contig_1_end - contig_1_start) * contig1_mean_dnd + \
-                        #         (contig_2_end - contig_2_start) * contig2_mean_dnd
-                        
-                        # if np.isnan(score):
-                        #     score = 0
-
-                        # edge = Edge(node1, node2, score)
-
-                        # if edge.score >= 0:
-                        #     node1.children.append(edge)
-                        #     node2.parents.append(edge)
-                        #     self.edges.append(edge)
-
-                        # node1.children.append(edge)
-                        # node2.parents.append(edge)
-                        # self.edges.append(edge)
-
         logger.debug(f"Created DAG with {len(self.nodes)} nodes and {len(self.edges)} edges") 
 
         for n in self.nodes:

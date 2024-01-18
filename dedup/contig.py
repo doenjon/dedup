@@ -153,13 +153,6 @@ class Contig():
                 return f">{self.name}\n{self.sequence}\n", [0, tdk, 0, tndk]
             else:
 
-                # # If completely duplicated
-                # for interval in self.duplicated:
-                #     try: # catch divide by zero
-                #         logger.debug(f"{self.name} -- {tdk} out of {tdk} duplicated kmers removed. {tndk} out of {tndk} non_duplicated kmers removed. dnd dedup ratio is {(tdk / (tndk)):.2f}")
-                #     except ZeroDivisionError:
-                #         logger.debug(f"{self.name} -- {tdk} out of {tdk} duplicated kmers removed. {tndk} out of {tndk} non_duplicated kmers removed. dnd dedup ratio is {(tdk / (tndk + 1)):.2f}")
-
                 # If completely duplicated
                 for interval in self.duplicated:
                     if interval[1] - interval[0] == len(self.sequence):

@@ -145,32 +145,8 @@ class Deduplicator():
         # # Perform whole genome self-alignment
         self_alignment = self.self_alignment()
 
-        # # Pickle self_alignment
-        # with open(os.path.join(self.tmp_dir, "self_alignment.pickle"), "wb") as file:
-        #     pickle.dump(self_alignment, file)
-
-        # # Pickle candidate_pairs
-        # with open(os.path.join(self.tmp_dir, "cotigs.pickle"), "wb") as file:
-        #     pickle.dump(self.contigs, file)
-        
-        # # Unpickle self_alignment
-        # with open(os.path.join(self.tmp_dir, "self_alignment.pickle"), "rb") as file:
-        #     self_alignment = pickle.load(file)
-
-        # # Unpickle candidate_pairs
-        # with open(os.path.join(self.tmp_dir, "cotigs.pickle"), "rb") as file:
-        #     self.contigs = pickle.load(file)
-
         # Find candidate pairs of contigs to deduplicate
         candidate_pairs = self.find_candidate_pairs_hash()
-
-        # candidate_pairs_filtered = ["2"]
-
-        # candidate_pairs = [c for c in candidate_pairs if c[0].name in candidate_pairs_filtered or c[1].name in candidate_pairs_filtered]
-
-        # for c1, c2 in candidate_pairs:
-        #     c1.plot_dnd_ratio()
-        #     c2.plot_dnd_ratio()
 
         logger.debug(f"candidate_pairs: {candidate_pairs}")
 
@@ -184,7 +160,6 @@ class Deduplicator():
         candidate_alignments_df.to_csv("candidate_alignments.paf", sep="\t", index=False, header=False)
 
         with Pool(processes=self.threads) as pool:
-        # with Pool(processes=1) as pool:
             # Results is a list of tuples, where each tuple is (index_of_contig_to_mark_duplication, (start, end))
             results = pool.starmap(self.dedup_pair, [job for job in jobs])
 
@@ -234,9 +209,6 @@ class Deduplicator():
         """
 
         # Calculate the best alignment
-        print("--------------------------------------------------------------------------------")
-        print(alignment_df)
-        print("--------------------------------------------------------------------------------")
         best_alignment = Alignment(contig1, contig2, alignment_df).find_best_alignment()
 
         # If there is no alignment, quit
@@ -270,9 +242,6 @@ class Deduplicator():
         
         logger.debug(best_alignment)
         
-        # contig1_dnd = mean(contig1.dnd_ratio[best_alignment['qstart']:best_alignment['qend']]) 
-        # contig2_dnd = mean(contig2.dnd_ratio[best_alignment['tstart']:best_alignment['tend']])
-
         # Get the contig to deduplicate, along with the start and end of the duplicated region
         contig_to_deduplicate = None
         deduplicate_idx = -1
@@ -289,7 +258,7 @@ class Deduplicator():
             end = best_alignment['tend']
             deduplicate_idx = 1
 
-        # HAC
+        # HACK
         def set_deduplication_interval(contig_to_deduplicate, contig_percent_duplicated, deduplicate_idx, best_alignment, start, end):
             # If over threshold, deduplicate the whole contig
             full_duplication_threshold = 0.9
@@ -407,52 +376,6 @@ class Deduplicator():
         candidate_pairs = list(set(candidate_pairs)) # remove duplicates
         return candidate_pairs
 
-
-    # def analyze_dedup(self):
-
-    #     read_kmer_db = self.make_kmer_db(self.reads, "reads", self.kmer_size)
-    #     assembly_kmer_db = self.make_kmer_db("deduplicated_contigs.fasta", "dedup_assembly", self.kmer_size)
-
-    #     homozygous_duplicated_kmer_db = self.filter_kmer_db(read_kmer_db, self.homozygous_lower_bound, self.homozygous_upper_bound, assembly_kmer_db, 2, 4)
-    #     homozygous_non_duplicated_kmer_db = self.filter_kmer_db(read_kmer_db, self.homozygous_lower_bound, self.homozygous_upper_bound, assembly_kmer_db, 1, 1)
-
-    #     # Write kmers to fasta
-    #     homo_dup_fasta = self.write_kmers(homozygous_duplicated_kmer_db, "homozygous_duplicated_post_dedup.fasta")
-    #     homo_non_dup_fasta = self.write_kmers(homozygous_non_duplicated_kmer_db, "homozygous_non_duplicated_post_dedup.fasta")
-
-    #     # Find position of kmers in contigs
-    #     homo_dup_bam = self.map_kmers(homo_dup_fasta, "homozygous_duplicated_mapped_post_dedup", assembly="deduplicated_contigs.fasta")
-    #     homo_non_dup_bam = self.map_kmers(homo_non_dup_fasta, "homozygous_non_duplicated_mapped_post_dedup", assembly="deduplicated_contigs.fasta")
-
-    #     # Get a map of which kmers are in which contigs
-    #     homo_dup_kmers_by_contig = self.get_kmers_by_contig(homo_dup_bam)
-    #     homo_non_dup_kmers_by_contig = self.get_kmers_by_contig(homo_non_dup_bam)
-
-    #     self.contigs = self.get_contigs_from_assembly("deduplicated_contigs.fasta")
-    #     for contig in self.contigs:
-
-    #         # contig.homo_dup_depth = [0 for _ in contig.homo_dup_depth]
-    #         # contig.homo_non_dup_depth = [0 for _ in contig.homo_non_dup_depth]
-
-    #         if contig.name in homo_dup_kmers_by_contig.keys():
-    #             for pos, kmer in homo_dup_kmers_by_contig[contig.name]:
-    #                 contig.homo_dup_depth[pos] += 1
-    #                 contig.homo_dup_kmers.append(kmer)
-
-    #         if contig.name in homo_non_dup_kmers_by_contig.keys():
-    #             for pos, kmer in homo_non_dup_kmers_by_contig[contig.name]:
-    #                 contig.homo_non_dup_depth[pos] += 1
-    #                 # contig.homo_non_dup_kmers.append(kmer)
-            
-    #         # contig.homo_dup_depth = homo_dup_depths[contig.name]
-    #         # contig.homo_non_dup_depth = homo_non_dup_depths[contig.name]
-    #         contig.calculate_dnd_ratio()
-       
-    #     with open("post_dedup.csv", "w") as file:
-    #         for contig in self.contigs:
-    #             file.write(",".join([contig.name, str(len(contig.sequence)), str(sum(contig.homo_dup_depth)), str(sum(contig.homo_non_dup_depth))]))
-    #             file.write("\n")
-
     def analyze_kmers(self):
         """
         Analyzes kmers in the reads and assembly sequences. Provides annotations to contigs
@@ -520,19 +443,9 @@ class Deduplicator():
                 contig.homo_non_dup_kmers_pos = homo_non_dup_kmers_by_contig[contig.name]
                 contig.calculate_homo_non_dup_depth()
 
-                # for pos, kmer in homo_non_dup_kmers_by_contig[contig.name]:
-                #     contig.homo_non_dup_depth[pos] += 1
-                #     # contig.homo_non_dup_kmers.append(kmer)
-            
-            # contig.homo_dup_depth = homo_dup_depths[contig.name]
-            # contig.homo_non_dup_depth = homo_non_dup_depths[contig.name]
+                
             contig.calculate_dnd_ratio()
-            # contig.plot_dnd_ratio()
-
-            # if contig.name in kmers_by_contig.keys():
-            #     contig.homo_dup_kmers = kmers_by_contig[contig.name]
-            # else:
-            #     contig.homo_dup_kmers = []
+           
         
         with open(f"{self.prefix}_stats.csv", "w") as file:
             for contig in self.contigs:
@@ -657,33 +570,25 @@ class Deduplicator():
         try:
             alignment_df_rev = pd.DataFrame([x.strip().split('\t')[0:12] for x in alignment_dict[contig2_name][contig1_name]], columns=columns_names)
 
+
             alignment_df_rev_fixed = alignment_df_rev.copy()
-            alignment_df_rev_fixed["qname"] = alignment_df_rev["tname"]
-            alignment_df_rev_fixed["tname"] = alignment_df_rev["qname"]
-            alignment_df_rev_fixed["qlen"] = alignment_df_rev["tlen"]
-            alignment_df_rev_fixed["tlen"] = alignment_df_rev["qlen"]
-            alignment_df_rev_fixed["qstart"] = alignment_df_rev["tstart"]
-            alignment_df_rev_fixed["qend"] = alignment_df_rev["tend"]
-            alignment_df_rev_fixed["tstart"] = alignment_df_rev["qstart"]
-            alignment_df_rev_fixed["tend"] = alignment_df_rev["qend"]
+
+            # Swap query and target
+            column_mapping = { "tname": "qname", "qname": "tname", "tlen": "qlen", "qlen": "tlen", "tstart": "qstart", "qstart": "tstart", "tend": "qend", "qend": "tend"}
+            alignment_df_rev_fixed = alignment_df_rev.rename(columns=column_mapping)
 
         except:
             alignment_df_rev_fixed = pd.DataFrame(columns=columns_names)
 
         alignment_df = pd.concat([alignment_df, alignment_df_rev_fixed])
 
-        # print(alignment_df)
-        alignment_df["qname"] = alignment_df["qname"].astype(str)
-        alignment_df["tname"] = alignment_df["tname"].astype(str)
-        alignment_df["qstart"] = alignment_df["qstart"].astype(int)
-        alignment_df["qend"] = alignment_df["qend"].astype(int)
-        alignment_df["tstart"] = alignment_df["tstart"].astype(int)
-        alignment_df["tend"] = alignment_df["tend"].astype(int)
-        alignment_df["nmatch"] = alignment_df["nmatch"].astype(int)
-        alignment_df["alen"] = alignment_df["alen"].astype(int)
-
-
+        # Fix datatypes
+        dtype_mapping = { "qname": str, "tname": str, "qstart": int, "qend": int, "tstart": int, "tend": int, "nmatch": int, "alen": int}
+        for column, dtype in dtype_mapping.items():
+            alignment_df[column] = alignment_df[column].astype(dtype)
+       
         alignment_df = alignment_df.drop_duplicates(subset=["qname", "tname", "qstart", "qend", "tstart", "tend"])
+        
         return alignment_df
         
 
