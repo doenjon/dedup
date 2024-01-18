@@ -35,6 +35,9 @@ class Alignment:
         """
         self.edges = []
 
+        self.contig1 = contig1
+        self.contig2 = contig2
+
         common_kmers = set(contig1.homo_dup_kmers) & set(contig2.homo_dup_kmers)
 
         self.contig1_dnd = [0] * len(contig1.sequence)
@@ -57,13 +60,13 @@ class Alignment:
                 self.contig2_dnd[i] -= 1
 
        
-        self.max_gap = 100000
+        self.max_gap = 250000
         self.match_weight = 0.2
-        self.aln_coverage = 0.1
+        self.aln_coverage = 0
         # logger.debug(f"Original PAF length: {len(paf_df)}")
         # logger.debug(f"Original PAF: {paf_df}")
         # Remove overlapping alignments with simplify_paf
-        paf_df = self.simplify_paf(paf_df)
+        # paf_df = self.simplify_paf(paf_df)
         # logger.debug(f"New PAF length: {len(paf_df)}")
         # logger.debug(f"New PAF: {paf_df}")
 
@@ -99,7 +102,7 @@ class Alignment:
             logger.debug("No alignment found")
             return None
 
-        # Get the best alignment
+        # Get the best alignment (sort by score)
         alignments.sort(key=lambda x: x[0], reverse=True)
         
         best_alignment_score = alignments[0][0]
@@ -125,11 +128,67 @@ class Alignment:
             tstart = end_node.contig2_start
             tend = start_node.contig2_end
 
+
+        # logger.debug(f"Before polishing alignment (qstart, qend, tstart, tend): {qstart}, {qend}, {tstart}, {tend}")
+
+        qstart, tstart = self.polish_alignment(qstart, tstart, mode="start")
+        qend, tend = self.polish_alignment(qend, tend, mode="end")
+
+        # if qstart > qend:
+        #     logger.ERROR(f"qstart > qend for contig {self.contig1.name}")
+        # if tstart > tend:
+        #     logger.ERROR(f"tstart > tend for contig {self.contig2.name}")
+
+        # logger.debug(f"After polishing alignment (qstart, qend, tstart, tend): {qstart}, {qend}, {tstart}, {tend}")
+
         result = {"qstart": qstart, "qend": qend, "tstart": tstart, "tend": tend, "direction": start_node.direction}
-        logger.debug(f"Best alignment: {result}")
+        logger.debug(f"Best alignment for {self.contig1} and {self.contig2}: {result}")
+        logger.debug(f"Best alignment score for {self.contig1} and {self.contig2}: {best_alignment_score}")
+        logger.debug(f"Best alignment path for {self.contig1} and {self.contig2}: {best_alignment_path}")
 
         return result
     
+
+    def polish_alignment(self, c1, c2, mode="start", polish_window=10000):
+
+        # Polish/optimize ends of alignment
+
+
+        def calculate_scores(dnd1, dnd2, c1, c2, window, mode, reverse=False):
+
+            if mode == "start":
+                scale = -1
+            elif mode == "end":
+                scale = 1
+            else:
+                logger.error(f"Invalid mode: {mode}")
+
+            if reverse:
+                scale *= -1
+
+            scores = [0]
+            range_func = range(window) if not reverse else range(0, -window, -1)
+            for i in range_func:
+                # if the new index is in range of the contigs
+                if (c1 + i >= 0 and c1 + i < len(dnd1)) and (c2 + i >= 0 and c2 + i < len(dnd2)):
+                    score = scale*dnd1[c1 + i] + scale*dnd2[c2 + i]
+                    scores.append(scores[-1] + score)
+
+            return scores
+        
+        update_start_f = calculate_scores(self.contig1_dnd, self.contig2_dnd, c1, c2, polish_window, mode)
+        update_start_r = calculate_scores(self.contig1_dnd, self.contig2_dnd, c1, c2, polish_window, mode, reverse=True)
+
+        if max(update_start_f) > max(update_start_r):
+            max_idx = np.argmax(update_start_f)
+        else:
+            max_idx = -np.argmax(update_start_r)
+    
+        c1 += max_idx
+        c2 += max_idx
+
+        return c1, c2
+
     def get_best_alignment(self, node, string=""):
         """
         Recursively finds the best alignment path starting from the given node.
@@ -198,12 +257,13 @@ class Alignment:
                 matching = row['nmatch']
                 alen = row['alen']
 
+
                 # score is average dnd_ratio of the segment weighted by length
-                c1_dnd_score = (contig1_end-contig1_start)*np.nanmean(self.contig1.dnd_ratio[contig1_start:contig1_end])
+                c1_dnd_score = (contig1_end-contig1_start)*np.nanmean(self.contig1_dnd[contig1_start:contig1_end])
                 if np.isnan(c1_dnd_score):
                     c1_dnd_score = 0
 
-                c2_dnd_score = (contig2_end-contig2_start)*np.nanmean(self.contig2.dnd_ratio[contig2_start:contig2_end])
+                c2_dnd_score = (contig2_end-contig2_start)*np.nanmean(self.contig2_dnd[contig2_start:contig2_end])
                 if np.isnan(c2_dnd_score):  
                     c2_dnd_score = 0
 
@@ -213,13 +273,14 @@ class Alignment:
                 if c1_dnd_score >= c1_deuplication_threshold and c2_dnd_score >= c2_deuplication_threshold:
 
                     # add bonus for matching bases
-                    matching_score = 2*matching - alen # number matching - number not matching
-
+                    # matching_score = 2*matching - alen # number matching - number not matching
+                    matching_score = matching
                     score = c1_dnd_score + c2_dnd_score + self.match_weight * matching_score
 
-                    node = Node(contig1_start, contig1_end, contig2_start, contig2_end, direction, score)
-                
-                    nodes.append(node)
+                    if score > 0:
+                        node = Node(contig1_start, contig1_end, contig2_start, contig2_end, direction, score)
+                    
+                        nodes.append(node)
 
             return nodes
     
@@ -241,10 +302,12 @@ class Alignment:
                 # Forward and reverse alignments have different logic
                 if node2.direction == node1.direction == "+":
 
+                    delta_gap_size = (node2.contig1_start - node1.contig1_end) - (node2.contig2_start - node1.contig2_end)
                     if  node2.contig1_end > node1.contig1_end and node2.contig2_end > node1.contig2_end and \
                         node2.contig1_start > node1.contig1_start and node2.contig2_start > node1.contig2_start and \
-                        node2.contig1_start - node1.contig1_end < self.max_gap and \
-                        node2.contig2_start - node1.contig2_end < self.max_gap:
+                        delta_gap_size < self.max_gap:
+                        # node2.contig1_start - node1.contig1_end < self.max_gap and \
+                        # node2.contig2_start - node1.contig2_end < self.max_gap:
 
 
 
@@ -254,8 +317,8 @@ class Alignment:
                         contig_2_end = node2.contig2_start
 
                         # Calculate edge score
-                        contig1_mean_dnd = 0 if (contig_1_end - contig_1_start) == 0 else np.nanmean(self.contig1.dnd_ratio[contig_1_start:contig_1_end])
-                        contig2_mean_dnd = 0 if (contig_2_end - contig_2_start) == 0 else np.nanmean(self.contig2.dnd_ratio[contig_2_start:contig_2_end])
+                        contig1_mean_dnd = 0 if (contig_1_end - contig_1_start) == 0 else np.nanmean(self.contig1_dnd[contig_1_start:contig_1_end])
+                        contig2_mean_dnd = 0 if (contig_2_end - contig_2_start) == 0 else np.nanmean(self.contig2_dnd[contig_2_start:contig_2_end])
                         score = (contig_1_end - contig_1_start) * contig1_mean_dnd + \
                                 (contig_2_end - contig_2_start) * contig2_mean_dnd
 
@@ -264,13 +327,13 @@ class Alignment:
                             c1_dnd_score = 0
                         
                         # Count gap as unaligned sequence, give appropritae negative score
-                        c1_score = c1_dnd_score - self.match_weight * (contig_1_end - contig_1_start)
+                        c1_score = c1_dnd_score #- self.match_weight * (contig_1_end - contig_1_start)
 
                         c2_dnd_score = (contig_2_end - contig_2_start) * contig2_mean_dnd
                         if np.isnan(c2_dnd_score):
                             c2_dnd_score = 0
                         
-                        c2_score = c2_dnd_score - self.match_weight * (contig_2_end - contig_2_start)
+                        c2_score = c2_dnd_score #- self.match_weight * (contig_2_end - contig_2_start)
                         
                         # # only make edges that have duplicated kmers if the edge isn't trivally short
                         # trivial_edge_length = 1000
@@ -311,10 +374,12 @@ class Alignment:
                 # Handle reverse alignment
                 elif node2.direction == node1.direction == "-":
 
+                    delta_gap_size = (node2.contig1_start - node1.contig1_end) - (node1.contig2_start - node2.contig2_end)
                     if  node2.contig1_end > node1.contig1_end     and node2.contig2_end < node1.contig2_end and \
                         node2.contig1_start > node1.contig1_start and node2.contig2_start < node1.contig2_start and \
-                        node2.contig1_start - node1.contig1_end < self.max_gap and \
-                        node1.contig2_start - node2.contig2_end < self.max_gap:
+                        delta_gap_size < self.max_gap:
+                        # node2.contig1_start - node1.contig1_end < self.max_gap and \
+                        # node1.contig2_start - node2.contig2_end < self.max_gap:
                         
                         contig_1_start = node1.contig1_end
                         contig_1_end = node2.contig1_start
@@ -322,8 +387,8 @@ class Alignment:
                         contig_2_end = node1.contig2_start
                         
                         # Calculate edge score
-                        contig1_mean_dnd = 0 if (contig_1_end - contig_1_start) == 0 else np.nanmean(self.contig1.dnd_ratio[contig_1_start:contig_1_end])
-                        contig2_mean_dnd = 0 if (contig_2_end - contig_2_start) == 0 else np.nanmean(self.contig2.dnd_ratio[contig_2_start:contig_2_end])
+                        contig1_mean_dnd = 0 if (contig_1_end - contig_1_start) == 0 else np.nanmean(self.contig1_dnd[contig_1_start:contig_1_end])
+                        contig2_mean_dnd = 0 if (contig_2_end - contig_2_start) == 0 else np.nanmean(self.contig2_dnd[contig_2_start:contig_2_end])
                         
                     
                         c1_dnd_score = (contig_1_end - contig_1_start) * contig1_mean_dnd

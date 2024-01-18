@@ -109,7 +109,7 @@ class Deduplicator():
             # Deduplication parameters
             self.full_duplication_threshold = 0.9   # Deduplicate whole contig if contig is this duplicated
             self.containment_threshold = 0.2        # Fraction of shared kmers to be considered a match
-            self.end_buffer = 50000 # If deduplication is this close to an edge, deduplicate to the edge 
+            self.end_buffer = 100000 # If deduplication is this close to an edge, deduplicate to the edge 
 
             if params.homozygous_lower_bound and params.homozygous_upper_bound:
                 self.homozygous_lower_bound = params.homozygous_lower_bound
@@ -217,80 +217,87 @@ class Deduplicator():
 
     @staticmethod
     def dedup_pair(contig1, contig2, alignment_df):
-            """
-            Analyse the alignment and duplication between two contigs, 
-            if they can be deduplicated, mark appropriate regions for deduplication
+        """
+        Analyse the alignment and duplication between two contigs, 
+        if they can be deduplicated, mark appropriate regions for deduplication
 
-            Args:
-                contig1 (Contig): The query contig.
-                contig2 (Contig): The target contig.
-                alignment_df (DataFrame): a filtered alignment dataframe, containing only contit1 and contig2.
+        Args:
+            contig1 (Contig): The query contig.
+            contig2 (Contig): The target contig.
+            alignment_df (DataFrame): a filtered alignment dataframe, containing only contit1 and contig2.
 
-            Returns:
-                None
+        Returns:
+            None
 
-            Raises:
-                None
-            """
+        Raises:
+            None
+        """
 
-            # Calculate the best alignment
-            best_alignment = Alignment(contig1, contig2, alignment_df).find_best_alignment()
+        # Calculate the best alignment
+        print("--------------------------------------------------------------------------------")
+        print(alignment_df)
+        print("--------------------------------------------------------------------------------")
+        best_alignment = Alignment(contig1, contig2, alignment_df).find_best_alignment()
 
-            # If there is no alignment, quit
-            if best_alignment is None:
-                logger.debug("no alignment found -- have not handled this")
-                return
+        # If there is no alignment, quit
+        if best_alignment is None:
+            logger.debug("no alignment found -- have not handled this")
+            return
 
-            # Find the contig that is more duplicated 
-            contig1_percent_duplicated = (best_alignment["qend"] - best_alignment["qstart"]) / len(contig1.sequence)
-            contig2_percent_duplicated = (best_alignment["tend"] - best_alignment["tstart"]) / len(contig2.sequence)
-            
-            logger.debug("--------------------------------------------------------------------------------")
-            logger.debug(f"Deduplicating {contig1} and {contig2}")
-            logger.debug(f"{contig1} is {100*contig1_percent_duplicated:.2f}% duplicated by alignment")
-            logger.debug(f"{contig2} is {100*contig2_percent_duplicated:.2f}% duplicated by alignment")
-           
-           
-            c1_homo_dup_aln = contig1.homo_dup_depth[best_alignment["qstart"]:best_alignment["qend"]]
-            c1_homo_dup_tot = contig1.homo_dup_depth[:]
-            c1_homo_non_dup_aln = contig1.homo_non_dup_depth[best_alignment["qstart"]:best_alignment["qend"]]
-            c1_homo_non_dup_tot = contig1.homo_non_dup_depth[:]
-            logger.debug(f"{contig1} alignment has {sum(c1_homo_dup_aln)}/{sum(c1_homo_dup_tot)} duplicated and {sum(c1_homo_non_dup_aln)}/{sum(c1_homo_non_dup_tot)} non duplicated kmers")
-            
-            
-            c2_homo_dup_aln = contig2.homo_dup_depth[best_alignment["tstart"]:best_alignment["tend"]]
-            c2_homo_dup_tot = contig2.homo_dup_depth[:]
-            c2_homo_non_dup_aln = contig2.homo_non_dup_depth[best_alignment["tstart"]:best_alignment["tend"]]
-            c2_homo_non_dup_tot = contig2.homo_non_dup_depth[:]
+        # Find the contig that is more duplicated 
+        contig1_percent_duplicated = (best_alignment["qend"] - best_alignment["qstart"]) / len(contig1.sequence)
+        contig2_percent_duplicated = (best_alignment["tend"] - best_alignment["tstart"]) / len(contig2.sequence)
+        
+        logger.debug("--------------------------------------------------------------------------------")
+        logger.debug(f"Deduplicating {contig1} and {contig2}")
+        logger.debug(f"{contig1} is {100*contig1_percent_duplicated:.2f}% duplicated by alignment")
+        logger.debug(f"{contig2} is {100*contig2_percent_duplicated:.2f}% duplicated by alignment")
+        
+        
+        c1_homo_dup_aln = contig1.homo_dup_depth[best_alignment["qstart"]:best_alignment["qend"]]
+        c1_homo_dup_tot = contig1.homo_dup_depth[:]
+        c1_homo_non_dup_aln = contig1.homo_non_dup_depth[best_alignment["qstart"]:best_alignment["qend"]]
+        c1_homo_non_dup_tot = contig1.homo_non_dup_depth[:]
+        logger.debug(f"{contig1} alignment has {sum(c1_homo_dup_aln)}/{sum(c1_homo_dup_tot)} duplicated and {sum(c1_homo_non_dup_aln)}/{sum(c1_homo_non_dup_tot)} non duplicated kmers")
+        
+        
+        c2_homo_dup_aln = contig2.homo_dup_depth[best_alignment["tstart"]:best_alignment["tend"]]
+        c2_homo_dup_tot = contig2.homo_dup_depth[:]
+        c2_homo_non_dup_aln = contig2.homo_non_dup_depth[best_alignment["tstart"]:best_alignment["tend"]]
+        c2_homo_non_dup_tot = contig2.homo_non_dup_depth[:]
 
-            logger.debug(f"{contig2} alignment has {sum(c2_homo_dup_aln)}/{sum(c2_homo_dup_tot)} duplicated and {sum(c2_homo_non_dup_aln)}/{sum(c2_homo_non_dup_tot)} non duplicated kmers")
-            
-            logger.debug(best_alignment)
-            
-            # contig1_dnd = mean(contig1.dnd_ratio[best_alignment['qstart']:best_alignment['qend']]) 
-            # contig2_dnd = mean(contig2.dnd_ratio[best_alignment['tstart']:best_alignment['tend']])
+        logger.debug(f"{contig2} alignment has {sum(c2_homo_dup_aln)}/{sum(c2_homo_dup_tot)} duplicated and {sum(c2_homo_non_dup_aln)}/{sum(c2_homo_non_dup_tot)} non duplicated kmers")
+        
+        logger.debug(best_alignment)
+        
+        # contig1_dnd = mean(contig1.dnd_ratio[best_alignment['qstart']:best_alignment['qend']]) 
+        # contig2_dnd = mean(contig2.dnd_ratio[best_alignment['tstart']:best_alignment['tend']])
 
-            # Get the contig to deduplicate, along with the start and end of the duplicated region
-            contig_to_deduplicate = None
-            deduplicate_idx = -1
-            if contig1_percent_duplicated > contig2_percent_duplicated:
-                contig_to_deduplicate = contig1
-                contig_percent_duplicated = contig1_percent_duplicated
-                start = best_alignment['qstart']
-                end = best_alignment['qend']
-                deduplicate_idx = 0
-            else:
-                contig_to_deduplicate = contig2
-                contig_percent_duplicated = contig2_percent_duplicated
-                start = best_alignment['tstart']
-                end = best_alignment['tend']
-                deduplicate_idx = 1
+        # Get the contig to deduplicate, along with the start and end of the duplicated region
+        contig_to_deduplicate = None
+        deduplicate_idx = -1
+        if contig1_percent_duplicated > contig2_percent_duplicated:
+            contig_to_deduplicate = contig1
+            contig_percent_duplicated = contig1_percent_duplicated
+            start = best_alignment['qstart']
+            end = best_alignment['qend']
+            deduplicate_idx = 0
+        else:
+            contig_to_deduplicate = contig2
+            contig_percent_duplicated = contig2_percent_duplicated
+            start = best_alignment['tstart']
+            end = best_alignment['tend']
+            deduplicate_idx = 1
 
+        # HAC
+        def set_deduplication_interval(contig_to_deduplicate, contig_percent_duplicated, deduplicate_idx, best_alignment, start, end):
             # If over threshold, deduplicate the whole contig
             full_duplication_threshold = 0.9
-            end_buffer = 50000
+            end_buffer = 100000
             if contig_percent_duplicated > full_duplication_threshold:
                 # contig_to_deduplicate.duplicated = [(0, len(contig_to_deduplicate.sequence))]
+                logger.debug(f"Deduplicating whole contig {contig_to_deduplicate}")
+
                 return (deduplicate_idx, (0, len(contig_to_deduplicate.sequence)), best_alignment)
             
             # If not over threshold, but close to an edge, deduplicate to the edge
@@ -308,8 +315,32 @@ class Deduplicator():
 
                 else:
                     logger.info(f"What to deduplicate {contig_to_deduplicate}, but can't figure out how")
+            
+            # logger.debug("***Failed to deduplicate***")
+            return None
 
-            logger.debug("***Failed to deduplicate***")
+        result = set_deduplication_interval(contig_to_deduplicate, contig_percent_duplicated, deduplicate_idx, best_alignment, start, end)
+        
+        if not result:
+
+            if contig1_percent_duplicated > contig2_percent_duplicated:
+                contig_to_deduplicate = contig2
+                contig_percent_duplicated = contig2_percent_duplicated
+                start = best_alignment['tstart']
+                end = best_alignment['tend']
+                deduplicate_idx = 1
+            else:
+                contig_to_deduplicate = contig1
+                contig_percent_duplicated = contig1_percent_duplicated
+                start = best_alignment['qstart']
+                end = best_alignment['qend']
+                deduplicate_idx = 0
+
+            result = set_deduplication_interval(contig_to_deduplicate, contig_percent_duplicated, deduplicate_idx, best_alignment, start, end)
+
+        return result
+
+    
 
     @staticmethod
     def get_hash(contig):
@@ -319,7 +350,7 @@ class Deduplicator():
             hash.update(kmer.encode('utf8'))
         return hash
 
-    def find_candidate_pairs_hash(self, containment_threshold=0.2):
+    def find_candidate_pairs_hash(self, containment_threshold=0.05):
         """
         Find candidate pairs of contigs that potentially contain duplicates.
 
@@ -362,16 +393,12 @@ class Deduplicator():
                         common_kmers = len(set(contig.homo_dup_kmers) & set(contig_2.homo_dup_kmers))
                         c1_containment = common_kmers / (len(contig.homo_dup_kmers) + 1)
                         c2_containment = common_kmers / (len(contig_2.homo_dup_kmers) + 1)
-                        # print(f"Jaccard similarity between {contig} and {contig_2}: {minhash.jaccard(hashes[contig_2])}")
-                        # print(f"c1_containment: {c1_containment}")
-                        # print(f"c2_containment: {c2_containment}")
+                        print(f"Jaccard similarity between {contig} and {contig_2}: {minhash.jaccard(hashes[contig_2])}")
+                        print(f"c1_containment: {c1_containment}")
+                        print(f"c2_containment: {c2_containment}")
                         # Always make the tuples in the same order
                         if c1_containment > self.containment_threshold or c2_containment > self.containment_threshold:
-<<<<<<< HEAD
-                            logger.debug(f"\t\tAdded contig pair {contig} - {contig_2} to candidates")
-=======
                             logger.debug(f"Added contig pair {contig} - {contig_2} to candidates")
->>>>>>> reporting
                             if contig < contig_2:
                                 candidate_pairs.append((contig, contig_2))
                             else:
@@ -477,10 +504,6 @@ class Deduplicator():
 
                 # contig.homo_dup_kmers.append(kmer)
                 for pos, kmer in homo_dup_kmers_by_contig[contig.name]:
-<<<<<<< HEAD
-                    # contig.homo_dup_depth[pos] += 1
-                    contig.homo_dup_kmers.append(kmer)
-=======
                     try:
                         contig.homo_dup_depth[pos] += 1
                         contig.homo_dup_kmers.append(kmer)
@@ -492,7 +515,6 @@ class Deduplicator():
                         print(pos)
                         sys.exit()
                     
->>>>>>> reporting
 
             if contig.name in homo_non_dup_kmers_by_contig.keys():
                 contig.homo_non_dup_kmers_pos = homo_non_dup_kmers_by_contig[contig.name]
@@ -575,11 +597,7 @@ class Deduplicator():
         cmd = f"kmc -k{kmer_size} -ci{lower_bound} -cs{upper_bound} -r {optional_params} {fasta} {db_path} {self.tmp_dir}"
         logger.info(cmd)
         
-<<<<<<< HEAD
         if not os.path.exists(f"{db_path}.kmc_suf"):
-=======
-        if not os.path.exists("f{db_path}.kmc_suf"):
->>>>>>> reporting
             p = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT) 
             retval = p.wait()
             logger.debug(f"make_kmer_db ret: {retval}")
@@ -599,7 +617,8 @@ class Deduplicator():
 
         alignment_file = os.path.join(self.tmp_dir, "self_alignment.paf")
 
-        cmd = f"minimap2 -t {self.threads} -DP -k19 -w19 -m200 {self.assembly} {self.assembly} > {alignment_file}"
+        # cmd = f"minimap2 -t {self.threads} -DP -k19 -w19 -m200 {self.assembly} {self.assembly} > {alignment_file}"
+        cmd = f"minimap2 -t {self.threads} -Dx asm20 {self.assembly} {self.assembly} > {alignment_file}"
         logger.info(cmd)
         if not os.path.exists(alignment_file):
             p = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
@@ -627,26 +646,46 @@ class Deduplicator():
     
     def get_alignment_df(self, alignment_dict, contig1_name, contig2_name):
 
+        columns_names = ["qname", "qlen", "qstart", "qend", "strand", "tname", "tlen", "tstart", "tend", "nmatch", "alen", "mapq"]
+
         try:
-            alignment_df = pd.DataFrame([x.strip().split('\t') for x in alignment_dict[contig1_name][contig2_name]])
-            alignment_df.columns = ["qname", "qlen", "qstart", "qend", "strand", "tname", "tlen", "tstart", "tend", "nmatch", "alen", "mapq", "xtra1", "xtra2", "xtra3", "xtra4", "xtra5"]
-            alignment_df["qname"] = alignment_df["qname"].astype(str)
-            alignment_df["tname"] = alignment_df["tname"].astype(str)
-            alignment_df["qstart"] = alignment_df["qstart"].astype(int)
-            alignment_df["qend"] = alignment_df["qend"].astype(int)
-            alignment_df["tstart"] = alignment_df["tstart"].astype(int)
-            alignment_df["tend"] = alignment_df["tend"].astype(int)
-            alignment_df["nmatch"] = alignment_df["nmatch"].astype(int)
-            alignment_df["alen"] = alignment_df["alen"].astype(int)
+            alignment_df = pd.DataFrame([x.strip().split('\t')[0:12] for x in alignment_dict[contig1_name][contig2_name]], columns=columns_names)
 
-
-            return alignment_df
-        
         except:
-            alignment_df = pd.DataFrame()
-            alignment_df.columns = ["qname", "qlen", "qstart", "qend", "strand", "tname", "tlen", "tstart", "tend", "nmatch", "alen", "mapq", "xtra1", "xtra2", "xtra3", "xtra4", "xtra5"]
+            alignment_df = pd.DataFrame(columns=columns_names)
 
-            return alignment_df
+        try:
+            alignment_df_rev = pd.DataFrame([x.strip().split('\t')[0:12] for x in alignment_dict[contig2_name][contig1_name]], columns=columns_names)
+
+            alignment_df_rev_fixed = alignment_df_rev.copy()
+            alignment_df_rev_fixed["qname"] = alignment_df_rev["tname"]
+            alignment_df_rev_fixed["tname"] = alignment_df_rev["qname"]
+            alignment_df_rev_fixed["qlen"] = alignment_df_rev["tlen"]
+            alignment_df_rev_fixed["tlen"] = alignment_df_rev["qlen"]
+            alignment_df_rev_fixed["qstart"] = alignment_df_rev["tstart"]
+            alignment_df_rev_fixed["qend"] = alignment_df_rev["tend"]
+            alignment_df_rev_fixed["tstart"] = alignment_df_rev["qstart"]
+            alignment_df_rev_fixed["tend"] = alignment_df_rev["qend"]
+
+        except:
+            alignment_df_rev_fixed = pd.DataFrame(columns=columns_names)
+
+        alignment_df = pd.concat([alignment_df, alignment_df_rev_fixed])
+
+        # print(alignment_df)
+        alignment_df["qname"] = alignment_df["qname"].astype(str)
+        alignment_df["tname"] = alignment_df["tname"].astype(str)
+        alignment_df["qstart"] = alignment_df["qstart"].astype(int)
+        alignment_df["qend"] = alignment_df["qend"].astype(int)
+        alignment_df["tstart"] = alignment_df["tstart"].astype(int)
+        alignment_df["tend"] = alignment_df["tend"].astype(int)
+        alignment_df["nmatch"] = alignment_df["nmatch"].astype(int)
+        alignment_df["alen"] = alignment_df["alen"].astype(int)
+
+
+        alignment_df = alignment_df.drop_duplicates(subset=["qname", "tname", "qstart", "qend", "tstart", "tend"])
+        return alignment_df
+        
 
     
     def filter_kmer_db(self, read_db, read_lower, read_upper, assembly_db, assembly_lower, assembly_upper):
@@ -926,6 +965,7 @@ def parse_args():
                         type=int, 
                         help='<min max> for kmer freuqency of homozygous peak', 
                         required=False)
+
     parser.add_argument('--save_tmp', 
                         action='store_true',
                         help='save temporary files',
@@ -942,9 +982,9 @@ if __name__ == "__main__":
 
     args = parse_args()
 
-    dedup = Deduplicator(args.assembly, args.reads, args.prefix, args)
+    # dedup = Deduplicator(args.assembly, args.reads, args.prefix, args)
 
-    dedup.dedup()
+    # dedup.dedup()
 
     dedup = Deduplicator("deduplicated_contigs.fasta", args.reads, "post_dedup", args)
 
