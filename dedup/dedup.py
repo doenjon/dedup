@@ -887,13 +887,13 @@ if __name__ == "__main__":
 
     args = parse_args()
 
-    # dedup = Deduplicator(args.assembly, args.reads, args.prefix, args)
+    dedup = Deduplicator(args.assembly, args.reads, args.prefix, args)
 
-    # dedup.dedup()
+    dedup.dedup()
 
-    dedup = Deduplicator("deduplicated_contigs.fasta", args.reads, "post_dedup", args)
+    # dedup = Deduplicator("deduplicated_contigs.fasta", args.reads, "post_dedup", args)
 
-    dedup.analyze_kmers()
+    # dedup.analyze_kmers()
 
     # Disable the profiler
     profiler.disable()
