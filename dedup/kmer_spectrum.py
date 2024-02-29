@@ -1,15 +1,16 @@
 import os
+import sys
 import subprocess
 import logging
 import numpy as np
 import seaborn as sns
 import matplotlib.pyplot as plt
-from scipy.optimize import curve_fit, minimize_scalar
+from scipy.optimize import curve_fit, minimize_scalar, differential_evolution
 
 
 logger = logging.getLogger("dedup_logger")
 
-def get_homozygous_kmer_range(kmer_db, tmp_dir, min_kmer_depth=10, max_kmer_depth=200):
+def get_homozygous_kmer_range(kmer_db, tmp_dir, min_kmer_depth, max_kmer_depth):
     '''
     Get the range of kmer frequencies that are homozygous
 
@@ -45,15 +46,18 @@ def get_kmer_histogram_data(kmer_db, tmp_dir):
 
     """
     histo_file = os.path.join(tmp_dir, 'kmer_counts.histo')
+    # cmd = f"kmc_tools transform {kmer_db} -ci{min_kmer_depth} -cx{max_kmer_depth} histogram {histo_file}"
     cmd = f"kmc_tools transform {kmer_db} histogram {histo_file}"
     logger.info(cmd)
         
     if not os.path.exists(histo_file):
         p = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT) 
         retval = p.wait()
-        logger.debug(f"make_kmer_db ret: {retval}")
+        if retval:
+            logger.critical(f"make_kmer_db ret: {retval}")
+            sys.exit(retval)
     else:
-        logger.debug(f"\tSkipping because results already exist")
+        logger.debug(f"Skipping because results already exist")
 
     data = []
     with open(histo_file, 'r') as f:
@@ -123,7 +127,23 @@ def find_minimum_between_peaks(mu1, sigma1, A1, sigma2, A2):
     
     return min_x
 
-def fit_kmer_spectrum(data, min_kmer_depth, max_kmer_depth, init_params=(10, 5, 1e-1, 5, 1e-1)):
+def loss_function(params, *args):
+    """
+    Objective function to compute the sum of squared residuals
+    between the model predictions and the observed data.
+
+    Parameters:
+        params (tuple): The parameters for the bimodal function. Values are (mu1, sigma1, A1, sigma2, A2).
+        args (tuple): The x and y data to fit the curve to.
+
+    Returns:
+        float: The sum of squared residuals between the model predictions and the observed data.
+    """
+    x, y = args
+    residuals = y - bimodal(x, *params)
+    return np.sum(residuals**2)
+
+def fit_kmer_spectrum(data, min_kmer_depth, max_kmer_depth):
     """
     Fits a mixture of two Gaussian curves to the given data and returns the 
     mean and standard deviation of the homogeneous peak.
@@ -152,23 +172,35 @@ def fit_kmer_spectrum(data, min_kmer_depth, max_kmer_depth, init_params=(10, 5, 
     x = np.arange(len(data))
     y = data
 
-    # Set bounds for the parameters
-    bounds = ((0, 1e-6, 0, 1e-6, 0), (np.inf, np.inf, np.inf, np.inf, np.inf))
+    bounds = [(min_kmer_depth, max_kmer_depth),  # mu1
+              (1e-6, 100),  # sigma1
+              (1e-6, 10),  # A1
+              (1e-6, 100),  # sigma2
+              (1e-6, 10)]  # A2
+
+    # Perform global optimization
+    result = differential_evolution(loss_function, bounds, args=(x, y))
+
+    if not result.success:
+        logger.error(f"Optimization failed: {result.message}")
+        logger.error(f"Consider providing homozygous_lower_bound and homozygous_upper_bound manually.")
+        sys.exit(1)
+
+    if result.fun > 2e-1:
+        logger.warning(f"Optimizer may not have found a good model of kmer-spectrum -- suggest manually checking curve fit (kmer_spectrum_fit.png)")
+        logger.warning(f"SSE: {result.fun}")
+        logger.warning(f"Consider providing homozygous_lower_bound and homozygous_upper_bound manually.")
+
+    params = result.x
     
-    # Fit the curve
-    params, pcov = curve_fit(bimodal, x, y, p0=init_params, bounds=bounds)
-
-    # print(params)
-    # print(pcov)
-
     # Graph the data and fit to check quality
     sns.set_theme(style="whitegrid")
     plt.figure(figsize=(12, 6))
     sns.barplot(x=np.arange(len(data)), y=data, color="skyblue")
 
-    plt.title('Seaborn Plot of Data')
-    plt.xlabel('Index')
-    plt.ylabel('Values')
+    plt.title('Kmer histogram')
+    plt.xlabel('Kmer depth')
+    plt.ylabel('Relative Frequency')
 
     # Add the fitted Gaussian curve
     x_vals = np.linspace(0, len(data), 1000)
@@ -192,4 +224,5 @@ def fit_kmer_spectrum(data, min_kmer_depth, max_kmer_depth, init_params=(10, 5, 
 
     #TODO @enhancement : automatic check that fit is good
 
+    sys.exit()
     return homo_left_bound, homo_right_bound

@@ -21,6 +21,8 @@ class KmerUtil():
         self.duplicate_kmer_lower_count = params.duplicate_kmer_lower_count
         self.duplicate_kmer_upper_count = params.duplicate_kmer_upper_count
 
+        self.min_kmer_depth = params.min_kmer_depth
+        self.max_kmer_depth = params.max_kmer_depth
 
     def analyze_kmers(self):
         # Count kmers
@@ -29,7 +31,7 @@ class KmerUtil():
 
         # Calculate homozygous kmer range, if not set by user - set both if either is not set
         if not self.homozygous_lower_bound or not self.homozygous_upper_bound:
-            self.homozygous_lower_bound, self.homozygous_upper_bound = get_homozygous_kmer_range(read_kmer_db, self.tmp_dir)
+            self.homozygous_lower_bound, self.homozygous_upper_bound = get_homozygous_kmer_range(read_kmer_db, self.tmp_dir, self.min_kmer_depth, self.max_kmer_depth)
         
         logger.info(f"\ncalculating common kmers")
         homozygous_duplicated_kmer_db = self.filter_kmer_db(read_kmer_db, self.homozygous_lower_bound, self.homozygous_upper_bound, assembly_kmer_db, self.duplicate_kmer_lower_count, self.duplicate_kmer_upper_count)

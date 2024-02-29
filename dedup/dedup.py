@@ -628,6 +628,18 @@ def parse_args():
                         default=0.2,
                         required=False)
     
+    advanced_options.add_argument('--min_kmer_depth',
+                        type=int,
+                        help='lowest frequency kmer to consider for kmer histogram fitting',
+                        default=10,
+                        required=False)
+    
+    advanced_options.add_argument('--max_kmer_depth',
+                        type=int,
+                        help='highest frequency kmer to consider for kmer histogram fitting',
+                        default=200,
+                        required=False)
+    
 
     args = parser.parse_args()
 
