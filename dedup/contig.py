@@ -7,9 +7,10 @@ import numpy as np
 import plotly.express as px
 
 from multiprocessing import Pool, Array
+from datasketch import MinHash
 
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("dedup_logger")
 
 class Contig():
     """

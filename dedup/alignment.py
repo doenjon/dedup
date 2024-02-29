@@ -3,13 +3,12 @@
 import logging
 import pandas as pd
 import numpy as np
-
+import sys
 from contig import Contig
 
 import copy
 
-
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("dedup_logger")
 
 class Alignment:
     """
@@ -17,7 +16,7 @@ class Alignment:
     through the DAG using homozygous kmers to score the path
     """
 
-    def __init__(self, contig1, contig2, paf_df):
+    def __init__(self, contig1, contig2, paf_df, max_gap=25000, match_weight=0.2, aln_coverage=0):
         """
         Initialize an Alignment object.
 
@@ -43,6 +42,7 @@ class Alignment:
         self.contig1_dnd = [0] * len(contig1.sequence)
         contig1_dup_pos = set([pos for pos, kmer in contig1.homo_dup_kmers_pos if kmer in common_kmers])
         contig1_non_dup_pos = set([pos for pos, kmer in contig1.homo_non_dup_kmers_pos if kmer in common_kmers])
+
         for i in range(len(contig1.sequence)):
             if i in contig1_dup_pos:
                 self.contig1_dnd[i] += 1
@@ -58,15 +58,13 @@ class Alignment:
                 self.contig2_dnd[i] += 1
             elif i in contig2_non_dup_pos:
                 self.contig2_dnd[i] -= 1
-
        
-        self.max_gap = 250000
-        self.match_weight = 0.2
-        self.aln_coverage = 0
+        self.max_gap = max_gap
+        self.match_weight = match_weight
+        self.aln_coverage = aln_coverage
         
-
-        self.nodes = self.parse_paf(paf_df)
-
+        simple_paf_df = self.simplify_paf(paf_df)
+        self.nodes = self.parse_paf(simple_paf_df)
 
     def find_best_alignment(self):
         """
@@ -115,7 +113,7 @@ class Alignment:
         qstart = start_node.contig1_start
         qend = end_node.contig1_end
 
-        # handle reverse alignments
+        # Forward and reverse alignments have different logic
         if start_node.direction == "+":
             tstart = start_node.contig2_start
             tend = end_node.contig2_end
@@ -252,6 +250,9 @@ class Alignment:
                 matching = row['nmatch']
                 alen = row['alen']
 
+                logger.debug(f"processing {row}")
+                logger.debug(f"c1 is {np.nanmean(self.contig1_dnd[contig1_start:contig1_end])} percent duplicated by kmer")
+                logger.debug(f"c2 is {np.nanmean(self.contig2_dnd[contig2_start:contig2_end])} percent duplicated by kmer")
 
                 # score is average dnd_ratio of the segment weighted by length
                 c1_dnd_score = (contig1_end-contig1_start)*np.nanmean(self.contig1_dnd[contig1_start:contig1_end])
@@ -265,6 +266,7 @@ class Alignment:
                 # only consider alignments with a substantial number of duplicated kmers
                 c1_deuplication_threshold = self.aln_coverage * (contig1_end - contig1_start)
                 c2_deuplication_threshold = self.aln_coverage * (contig2_end - contig2_start)
+
                 if c1_dnd_score >= c1_deuplication_threshold and c2_dnd_score >= c2_deuplication_threshold:
 
                     # add bonus for matching bases
@@ -297,6 +299,7 @@ class Alignment:
                 # Forward and reverse alignments have different logic
                 if node2.direction == node1.direction == "+":
 
+                    # Node 2 is after node 1 and the gap between the nodes is not larger than max_gap
                     delta_gap_size = (node2.contig1_start - node1.contig1_end) - (node2.contig2_start - node1.contig2_end)
                     if  node2.contig1_end > node1.contig1_end and node2.contig2_end > node1.contig2_end and \
                         node2.contig1_start > node1.contig1_start and node2.contig2_start > node1.contig2_start and \
@@ -322,6 +325,7 @@ class Alignment:
                 # Handle reverse alignment
                 elif node2.direction == node1.direction == "-":
 
+                    # Node 2 is after node 1 and the gap between the nodes is not larger than max_gap
                     delta_gap_size = (node2.contig1_start - node1.contig1_end) - (node1.contig2_start - node2.contig2_end)
                     if  node2.contig1_end > node1.contig1_end     and node2.contig2_end < node1.contig2_end and \
                         node2.contig1_start > node1.contig1_start and node2.contig2_start < node1.contig2_start and \
@@ -381,13 +385,9 @@ class Alignment:
             indices_to_keep = []
             for idx, row in paf_df.iterrows():
                 if not any(
-                    (
-                        (row['qstart'] >= paf_df.loc[j, 'qstart']) and (row['qend'] <= paf_df.loc[j, 'qend'])
-                    ) and (
-                        (row['tstart'] >= paf_df.loc[j, 'tstart']) and (row['tend'] <= paf_df.loc[j, 'tend'])
-                    ) and {
-                        row["strand"] == paf_df.loc[j, "strand"]
-                    }
+                    (row['qstart'] >= paf_df.loc[j, 'qstart']) and (row['qend'] <= paf_df.loc[j, 'qend']) and
+                    (row['tstart'] >= paf_df.loc[j, 'tstart']) and (row['tend'] <= paf_df.loc[j, 'tend']) and
+                    (row["strand"] == paf_df.loc[j, "strand"])
                     for j in indices_to_keep
                 ):
                     indices_to_keep.append(idx)
