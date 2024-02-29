@@ -224,5 +224,4 @@ def fit_kmer_spectrum(data, min_kmer_depth, max_kmer_depth):
 
     #TODO @enhancement : automatic check that fit is good
 
-    sys.exit()
     return homo_left_bound, homo_right_bound
