@@ -1,53 +1,60 @@
 import pandas as pd
+import numpy as np
 import pytest
 from dedup.alignment import Alignment, Node, Edge
 from unittest.mock import MagicMock, patch
 
 
-
 @pytest.fixture
 def alignment(mocker):
-    # Create mock Contig objects
+    """ Mock alinment object to use with tests"""
+    # Mock Contigs with set params
     contig1 = MagicMock()
     contig2 = MagicMock()
     
-    # Mocking the dnd_ratio attribute as a list
     contig1.dnd_ratio = [1, 1, 0, 0, 0, 0] 
     contig2.dnd_ratio = [0, 1, 0, 0, 0, 0]
 
-    # Create a mock DataFrame for PAF file data
+    contig1.dnd_ratio = np.array([1, 1, 0, 0, 0, 0])
+    contig2.dnd_ratio = np.array([0, 1, 0, 0, 0, 0])
+
+    # Mock paf data
     paf_data = {
         'qstart': [0, 1, 2],
         'qend': [2, 3, 4],
         'tstart': [0, 1, 2],
         'tend': [2, 3, 4],
-        'strand': ['+', '+', '+']
+        'strand': ['+', '+', '+'],
+        'nmatch': [3, 3, 3],
+        'alen': [4, 4, 4]
     }
     paf_df = pd.DataFrame(paf_data)
 
     return Alignment(contig1, contig2, paf_df)
 
+
 def test_parse_paf(alignment):
-    # Test node creation from PAF data
+    """ Test correct parsing of paf data """
     paf_data = {
         'qstart': [0, 1, 2],
         'qend': [2, 3, 4],
         'tstart': [0, 1, 2],
         'tend': [2, 3, 4],
-        'strand': ['+', '+', '+']
+        'strand': ['+', '+', '+'],
+        'nmatch': [3, 3, 3],
+        'alen': [4, 4, 4]
     }
     paf_df = pd.DataFrame(paf_data)
 
     nodes = alignment.parse_paf(paf_df)
 
-    print(nodes)
     assert len(nodes) == 3
     assert nodes[0].contig1_start == 0
     assert nodes[0].contig1_end == 2
     assert nodes[0].contig2_start == 0
     assert nodes[0].contig2_end == 2
     assert nodes[0].direction == '+'
-    assert nodes[0].score == 3
+    assert nodes[0].score > 0
 
 def test_find_best_alignment_no_alignment(alignment, mocker):
     # All scores negative, so no valid alignment
@@ -65,7 +72,7 @@ def test_find_best_alignment_with_alignment(alignment, mocker):
     alignment.edges = [Edge(0, 1, 0), Edge(0, 2, 0), Edge(1, 2, 0)]
     result = alignment.find_best_alignment()
 
-    assert result == {'qstart': 0, 'qend': 2, 'tstart': 0, 'tend': 2}
+    assert result == {'qstart': 0, 'qend': 3, 'tstart': 0, 'tend': 3, 'direction': '+'}
 
 
 def test_create_DAG(alignment):

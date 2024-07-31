@@ -4,7 +4,7 @@ import logging
 import pandas as pd
 import numpy as np
 import sys
-from contig import Contig
+from dedup.contig import Contig
 
 import copy
 
