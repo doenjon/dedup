@@ -2,7 +2,7 @@ import os
 import sys
 import logging
 import subprocess
-from kmer_spectrum import get_homozygous_kmer_range
+from dedup.kmer_spectrum import get_homozygous_kmer_range
 
 
 logger = logging.getLogger("dedup_logger")
@@ -192,9 +192,7 @@ class KmerUtil():
         basename = os.path.join(self.tmp_dir, f"{outname}")
 
         # Build index - don't rebuild if exists
-        cmd = f'''
-        bwa index {assembly}
-        '''
+        cmd = f"bwa index {assembly}"
         logger.info(cmd)
         if not os.path.exists(f"{assembly}.bwt"):
             # subprocess.check_output(cmd, shell=True)
