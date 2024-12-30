@@ -101,10 +101,13 @@ class Deduplicator():
         else:
             os.makedirs(self.tmp_dir)
 
-    def __del__(self):
-        # Remove temporary directory
-        if not self.params.save_tmp and os.path.exists(self.tmp_dir):
-            shutil.rmtree(self.tmp_dir)
+        if not os.path.exists(assembly):
+            raise FileNotFoundError(f"Assembly file not found: {assembly}")
+        if not os.path.exists(reads):
+            raise FileNotFoundError(f"Reads file not found: {reads}")
+        if not 0 < params.containment_threshold <= 1:
+            raise ValueError("containment_threshold must be between 0 and 1")
+
 
     def dedup(self):
         '''
@@ -117,57 +120,25 @@ class Deduplicator():
                 
         # Collect kmers stats
         self.analyze_kmers()
-
-        # # Perform whole genome self-alignment
+        
+        # Perform self alignment
         self_alignment = self.self_alignment()
 
         # Find candidate pairs of contigs to deduplicate
         candidate_pairs = self.find_candidate_pairs_hash(self.containment_threshold)
+        alignments = self.process_candidate_pairs(candidate_pairs, self_alignment)
+        
+        # Write results
+        self.write_results(alignments)
 
-        logger.debug(f"candidate_pairs: {candidate_pairs}")
-
-        jobs = []
-        candidate_alignments_df = pd.DataFrame()
+    def process_candidate_pairs(self, candidate_pairs, self_alignment):
+        """Process candidate pairs and return alignments."""
+        alignments = []
         for pair in candidate_pairs:
-            alignment_df = self.get_alignment_df(self_alignment, pair[0].name, pair[1].name)
-            candidate_alignments_df = pd.concat([candidate_alignments_df, alignment_df])
-            jobs.append((pair[0], pair[1], alignment_df, self.alignment_max_gap, self.alignment_match_weight, self.aln_min_coverage))
-
-        candidate_alignments_df.to_csv("candidate_alignments.paf", sep="\t", index=False, header=False)
-
-        # Process pairs sequentially instead of in parallel
-        results = []
-        for job in jobs:
-            result = self.dedup_pair(*job)
-            results.append(result)
-
-        best_alignments_df = pd.DataFrame()
-        # Process the results
-        for pair, result in zip(candidate_pairs, results):
-            logging.debug(f"pair: {pair} result: {result}")
-            if result:
-                idx, interval, best_aln = result
-                pair[idx].duplicated.append(interval)
-                logger.debug(pair[idx].duplicated)
-                logger.debug(best_aln)
-                best_aln_q = pd.DataFrame([[pair[0].name, len(pair[0].sequence), best_aln["qstart"], best_aln["qend"], best_aln["direction"], pair[1].name, len(pair[1].sequence), best_aln["tstart"], best_aln["tend"], "0", "0", "0"]], columns=["qname", "qlen", "qstart", "qend", "dir", "tname", "tlen", "tstart", "tend", "a", "b", "c"])
-                best_aln_t = pd.DataFrame([[pair[1].name, len(pair[1].sequence), best_aln["tstart"], best_aln["tend"], best_aln["direction"], pair[0].name, len(pair[0].sequence), best_aln["qstart"], best_aln["qend"], "0", "0", "0"]], columns=["qname", "qlen", "qstart", "qend", "dir", "tname", "tlen", "tstart", "tend", "a", "b", "c"])
-                best_alignments_df =pd.concat([best_alignments_df, best_aln_q, best_aln_t])
-
-        best_alignments_df.to_csv("best_alignments.paf", sep="\t", index=False, header=False)
-
-        with open(f"deduplicated_contigs.fasta", "w") as seq_file:
-            # with open(f"deduplicated_stats.csv", "w") as stats_file:
-            for c in self.contigs:
-                seq = c.get_non_duplicated_sequence()
-                seq_file.write(seq)
-                    # print(",".join(stats))
-                    # e=0.000001 # prevent divide by zero
-                    # stats.append(stats[0] / (stats[1] + e))
-                    # stats.append(stats[2] / (stats[3] + e))
-                    # stats.append(stats[0] / (stats[2] + e))
-                    # stats_file.write(f"{c.name},{','.join([str(s) for s in stats])}\n")
-
+            alignment = self.process_pair(pair, self_alignment)
+            if alignment:
+                alignments.append(alignment)
+        return alignments
 
     def log_dedup_statistics(contig1, contig2, best_alignment):
         """
@@ -449,6 +420,17 @@ class Deduplicator():
         
         return contigs
         
+    def __enter__(self):
+        return self
+        
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.cleanup()
+        
+    def cleanup(self):
+        """Clean up temporary files and resources."""
+        if not self.params.save_tmp and os.path.exists(self.tmp_dir):
+            shutil.rmtree(self.tmp_dir)
+
 def parse_args():
     """
     Parse command line arguments.
