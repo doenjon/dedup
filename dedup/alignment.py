@@ -35,34 +35,9 @@ class Alignment:
         self.aln_coverage = aln_coverage
 
         self.graph = nx.DiGraph()
-        self.common_kmers = set(contig1.homo_dup_kmers) & set(contig2.homo_dup_kmers)
-        self.contig1_dnd = self.calculate_dnd(contig1, self.common_kmers)
-        self.contig2_dnd = self.calculate_dnd(contig2, self.common_kmers)
 
         simple_paf_df = self.simplify_paf(paf_df)
         self.parse_paf(simple_paf_df)
-
-    def calculate_dnd(self, contig, common_kmers):
-        """
-        Calculate the duplication/non-duplication (DND) ratio for a contig.
-
-        Args:
-            contig (Contig): The contig to calculate the DND ratio for.
-            common_kmers (set): The set of common k-mers between the two contigs.
-
-        Returns:
-            list: A list of DND ratios for each position in the contig.
-        """
-        dnd = [0] * len(contig.sequence)
-        dup_pos = set(pos for pos, kmer in contig.homo_dup_kmers_pos if kmer in common_kmers)
-        non_dup_pos = set(pos for pos, kmer in contig.homo_non_dup_kmers_pos if kmer in common_kmers)
-
-        for i in range(len(contig.sequence)):
-            if i in dup_pos:
-                dnd[i] += 1
-            elif i in non_dup_pos:
-                dnd[i] -= 1
-        return dnd
 
     def parse_paf(self, paf_df):
         """
@@ -77,8 +52,8 @@ class Alignment:
             direction = row['strand']
             matching = row['nmatch']
 
-            c1_dnd_score = (contig1_end - contig1_start) * np.nanmean(self.contig1_dnd[contig1_start:contig1_end])
-            c2_dnd_score = (contig2_end - contig2_start) * np.nanmean(self.contig2_dnd[contig2_start:contig2_end])
+            c1_dnd_score = (contig1_end - contig1_start) * np.nanmean(self.contig1.dnd_ratio[contig1_start:contig1_end])
+            c2_dnd_score = (contig2_end - contig2_start) * np.nanmean(self.contig2.dnd_ratio[contig2_start:contig2_end])
 
             if c1_dnd_score >= self.aln_coverage * (contig1_end - contig1_start) and \
                c2_dnd_score >= self.aln_coverage * (contig2_end - contig2_start):
