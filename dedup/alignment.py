@@ -126,22 +126,19 @@ class Alignment:
         Returns:
             dict: A dictionary containing the start and end positions of the alignment.
         """
-        best_score = float('-inf')
-        best_path = None
-
-        for node in self.graph.nodes:
-            path = nx.dag_longest_path(self.graph, weight='score', default_weight=0)
-            score = sum(self.graph.nodes[n]['score'] for n in path)
-            if score > best_score:
-                best_score = score
-                best_path = path
-
-        if best_score <= 0:
+        # Find the longest path in the DAG based on the 'score' attribute
+        path = nx.dag_longest_path(self.graph, weight='score', default_weight=0)
+        
+        if not path:
             logger.debug("No alignment found")
             return None
 
-        start_node = best_path[0]
-        end_node = best_path[-1]
+        # Calculate the total score of the path
+        best_score = sum(self.graph.nodes[n]['score'] for n in path)
+
+        # Extract the start and end nodes from the path
+        start_node = path[0]
+        end_node = path[-1]
         qstart, qend, tstart, tend, direction = start_node[0], end_node[1], start_node[2], end_node[3], start_node[4]
 
         result = {"qstart": qstart, "qend": qend, "tstart": tstart, "tend": tend, "direction": direction}
