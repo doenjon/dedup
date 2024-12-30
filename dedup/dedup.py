@@ -1,4 +1,3 @@
-
 import os
 import sys
 import shutil
@@ -136,9 +135,11 @@ class Deduplicator():
 
         candidate_alignments_df.to_csv("candidate_alignments.paf", sep="\t", index=False, header=False)
 
-        with Pool(processes=self.threads) as pool:
-            # Results is a list of tuples, where each tuple is (index_of_contig_to_mark_duplication, (start, end))
-            results = pool.starmap(self.dedup_pair, [job for job in jobs])
+        # Process pairs sequentially instead of in parallel
+        results = []
+        for job in jobs:
+            result = self.dedup_pair(*job)
+            results.append(result)
 
         best_alignments_df = pd.DataFrame()
         # Process the results
