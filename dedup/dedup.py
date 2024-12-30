@@ -96,7 +96,7 @@ class Deduplicator():
 
         self.tmp_dir = params.tmp_dir
         if os.path.exists(self.tmp_dir):
-            raise FileExistsError(f"{self.tmp_dir} already exists")
+            logger.info(f"{self.tmp_dir} already exists")
         else:
             os.makedirs(self.tmp_dir)
 
@@ -117,7 +117,6 @@ class Deduplicator():
         finding candidate pairs, performing self-alignment, deduplicating pairs, and
         writing the deduplicated contigs to a file.
         '''
-                
         # Collect kmers stats
         self.analyze_kmers()
         
@@ -126,26 +125,60 @@ class Deduplicator():
 
         # Find candidate pairs of contigs to deduplicate
         candidate_pairs = self.find_candidate_pairs_hash(self.containment_threshold)
-
         logger.debug(f"candidate_pairs: {candidate_pairs}")
 
+        # Process alignments and deduplicate
+        best_alignments_df = self.process_candidate_pairs(candidate_pairs, self_alignment)
+        best_alignments_df.to_csv("best_alignments.paf", sep="\t", index=False, header=False)
+
+        # Write output
+        self.write_deduplicated_contigs()
+
+    def process_candidate_pairs(self, candidate_pairs, self_alignment):
+        '''
+        Process candidate pairs to find and record duplications.
+        
+        Args:
+            candidate_pairs (list): List of contig pairs to analyze
+            self_alignment (dict): Dictionary containing alignment information
+            
+        Returns:
+            DataFrame: Contains information about the best alignments found
+        '''
         jobs = []
         candidate_alignments_df = pd.DataFrame()
+        
+        # Prepare alignment data for each pair
         for pair in candidate_pairs:
             alignment_df = self.get_alignment_df(self_alignment, pair[0].name, pair[1].name)
             candidate_alignments_df = pd.concat([candidate_alignments_df, alignment_df])
-            jobs.append((pair[0], pair[1], alignment_df, self.alignment_max_gap, self.alignment_match_weight, self.aln_min_coverage))
+            jobs.append((pair[0], pair[1], alignment_df, self.alignment_max_gap, 
+                        self.alignment_match_weight, self.aln_min_coverage))
 
-        candidate_alignments_df.to_csv("candidate_alignments.paf", sep="\t", index=False, header=False)
+        candidate_alignments_df.to_csv("candidate_alignments.paf", sep="\t", 
+                                     index=False, header=False)
 
-        # Process pairs sequentially instead of in parallel
+        # Process pairs and collect results
         results = []
         for job in jobs:
             result = self.dedup_pair(*job)
             results.append(result)
 
+        return self.collect_deduplication_results(candidate_pairs, results)
+
+    def collect_deduplication_results(self, candidate_pairs, results):
+        '''
+        Collect and process the results from deduplication of pairs.
+        
+        Args:
+            candidate_pairs (list): List of contig pairs that were analyzed
+            results (list): Results from dedup_pair for each pair
+            
+        Returns:
+            DataFrame: Contains information about the best alignments found
+        '''
         best_alignments_df = pd.DataFrame()
-        # Process the results
+        
         for pair, result in zip(candidate_pairs, results):
             logging.debug(f"pair: {pair} result: {result}")
             if result:
@@ -153,18 +186,39 @@ class Deduplicator():
                 pair[idx].duplicated.append(interval)
                 logger.debug(pair[idx].duplicated)
                 logger.debug(best_aln)
-                best_aln_q = pd.DataFrame([[pair[0].name, len(pair[0].sequence), best_aln["qstart"], best_aln["qend"], best_aln["direction"], pair[1].name, len(pair[1].sequence), best_aln["tstart"], best_aln["tend"], "0", "0", "0"]], columns=["qname", "qlen", "qstart", "qend", "dir", "tname", "tlen", "tstart", "tend", "a", "b", "c"])
-                best_aln_t = pd.DataFrame([[pair[1].name, len(pair[1].sequence), best_aln["tstart"], best_aln["tend"], best_aln["direction"], pair[0].name, len(pair[0].sequence), best_aln["qstart"], best_aln["qend"], "0", "0", "0"]], columns=["qname", "qlen", "qstart", "qend", "dir", "tname", "tlen", "tstart", "tend", "a", "b", "c"])
-                best_alignments_df =pd.concat([best_alignments_df, best_aln_q, best_aln_t])
+                
+                # Create alignment records for both query and target
+                best_aln_q = pd.DataFrame([[
+                    pair[0].name, len(pair[0].sequence), best_aln["qstart"], 
+                    best_aln["qend"], best_aln["direction"], pair[1].name, 
+                    len(pair[1].sequence), best_aln["tstart"], best_aln["tend"], 
+                    "0", "0", "0"
+                ]], columns=["qname", "qlen", "qstart", "qend", "dir", "tname", 
+                            "tlen", "tstart", "tend", "a", "b", "c"])
+                
+                best_aln_t = pd.DataFrame([[
+                    pair[1].name, len(pair[1].sequence), best_aln["tstart"], 
+                    best_aln["tend"], best_aln["direction"], pair[0].name, 
+                    len(pair[0].sequence), best_aln["qstart"], best_aln["qend"], 
+                    "0", "0", "0"
+                ]], columns=["qname", "qlen", "qstart", "qend", "dir", "tname", 
+                            "tlen", "tstart", "tend", "a", "b", "c"])
+                            
+                best_alignments_df = pd.concat([best_alignments_df, best_aln_q, best_aln_t])
 
-        best_alignments_df.to_csv("best_alignments.paf", sep="\t", index=False, header=False)
+        return best_alignments_df
 
-        with open(f"deduplicated_contigs.fasta", "w") as seq_file:
-            # with open(f"deduplicated_stats.csv", "w") as stats_file:
+    def write_deduplicated_contigs(self, output_file="deduplicated_contigs.fasta"):
+        '''
+        Write the deduplicated contigs to a FASTA file.
+        
+        Args:
+            output_file (str): Path to output FASTA file
+        '''
+        with open(output_file, "w") as seq_file:
             for c in self.contigs:
                 seq = c.get_non_duplicated_sequence()
                 seq_file.write(seq)
-                 
 
     def log_dedup_statistics(contig1, contig2, best_alignment):
         """
