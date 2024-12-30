@@ -78,35 +78,41 @@ class Contig():
                 # self.dnd_ratio.append(dnd)
     
     def plot_dnd_ratio(self, window=10000):
+        """
+        Plots the moving average of the dnd_ratio and saves the plot as an image and HTML file.
+
+        Args:
+            window (int): The size of the moving average window.
+
+        Returns:
+            None
+        """
+        def moving_average(data, window_size):
             """
-            Plots the moving average of the dnd_ratio and saves the plot as an image and HTML file.
+            Calculate the moving average of a list of data.
 
             Args:
-                window (int): The size of the moving average window.
+                data (list): The list of data to calculate the moving average for.
+                window_size (int): The size of the moving average window.
 
             Returns:
-                None
+                list: The moving average of the data.
             """
-            def moving_average(data, window_size):
-                ma = []
-                # for i in range(0, len(data) - window_size):
-                #     ma.append(np.nanmean(data[i:i+window_size]))
-                # return ma
+            ma = []
 
-                for i in range(0, len(data), window_size):
-                    ma.append(np.nanmean(data[i:i+window_size]))
-                return ma
-                # return np.convolve(data, np.ones(window_size) / window_size, mode='valid')
-           
-            moving_ave = moving_average(self.dnd_ratio, window)
-            pos = [i*window for i in range(0, len(moving_ave))]
+            for i in range(0, len(data), window_size):
+                ma.append(np.nanmean(data[i:i+window_size]))
+            return ma
+        
+        moving_ave = moving_average(self.dnd_ratio, window)
+        pos = [i*window for i in range(0, len(moving_ave))]
 
-            if not os.path.exists("results"):
-                os.makedirs("results")
-                
-            fig = px.scatter(x=pos, y=moving_ave, labels={'x': 'Position', 'y': 'Duplication Score'})
-            fig.write_image(f'results/{self.name}_dnd_ratio.png')
-            # fig.write_html(f'results/{self.name}_dnd_ratio.html')
+        if not os.path.exists("results"):
+            os.makedirs("results")
+            
+        fig = px.scatter(x=pos, y=moving_ave, labels={'x': 'Position', 'y': 'Duplication Score'})
+        fig.write_image(f'results/{self.name}_dnd_ratio.png')
+        # fig.write_html(f'results/{self.name}_dnd_ratio.html')
 
     def get_kmers(self, bam):
         """
@@ -134,6 +140,12 @@ class Contig():
 
 
     def merge_overlapping_duplicates(self):
+        """
+        Merge overlapping duplication intervals.
+
+        Returns:
+            list: A list of merged duplication intervals.
+        """
 
         if len(self.duplicated) <= 1:
             return self.duplicated
@@ -153,7 +165,12 @@ class Contig():
         return merged
 
     def get_non_duplicated_sequence(self):
+        """
+        Get non-duplicated sequence from a contig
 
+        Returns:
+            str: The non-duplicated sequence.
+        """
         self.duplicated = self.merge_overlapping_duplicates()
 
         # Get sequence to include
@@ -175,65 +192,6 @@ class Contig():
 
         return_str = "".join(return_seq)
         return return_str
-
-    # def get_non_duplicated_sequence(self):
-    #         """
-    #         Returns the non-duplicated sequence based on the presence of duplicated intervals.
-
-    #         If the sequence is not duplicated, it returns the sequence as is.
-    #         If the sequence is completely duplicated, it returns an empty string.
-    #         If the sequence is 5' duplicated, it returns the sequence starting from the end of the duplication interval.
-    #         If the sequence is 3' duplicated, it returns the sequence up to the start of the duplication interval.
-
-    #         Returns:
-    #             str: The non-duplicated sequence.
-    #         """
-    #         logger.debug(f"{self.name} duplicated on {self.duplicated}")
-           
-    #         # TODO handle multiple deduplication intervals
-
-    #         tdk = sum(self.homo_dup_depth)
-    #         tndk = sum(self.homo_non_dup_depth)
-
-    #         if not self.duplicated:
-    #             logger.debug(f"{self.name} -- 0 out of {tdk} kmers duplicated removed. 0 out of {tndk} non_duplicated kmers removed.")
-    #             return f">{self.name}\n{self.sequence}\n", [0, tdk, 0, tndk]
-    #         else:
-
-    #             # If completely duplicated
-    #             for interval in self.duplicated:
-    #                 if interval[1] - interval[0] == len(self.sequence):
-    #                     try: # catch divide by zero
-    #                         logger.debug(f"{self.name} -- {tdk} out of {tdk} duplicated kmers removed. {tndk} out of {tndk} non_duplicated kmers removed. dnd dedup ratio is {(tdk / (tndk)):.2f}")
-    #                     except ZeroDivisionError:
-    #                         logger.debug(f"{self.name} -- {tdk} out of {tdk} duplicated kmers removed. {tndk} out of {tndk} non_duplicated kmers removed. dnd dedup ratio is {(tdk / (tndk + 1)):.2f}")
-                        
-    #                     return "",  [tdk, tdk, tndk, tndk]
-
-    #             # Otherwise, find start and end of non-duplicated sequence
-    #             # get 5' start
-    #             start = 0
-    #             for interval in self.duplicated:
-    #                 if 0 in interval and interval[1] > start:
-    #                     start = interval[1]
-
-    #             end = len(self.sequence)
-    #             for interval in self.duplicated:
-    #                 if len(self.sequence) in interval and interval[0] < end:
-    #                     end = interval[0]
-                
-    #             removed_dup = (sum(self.homo_dup_depth[0:start]) + sum(self.homo_dup_depth[end:]))
-    #             removed_ndup = (sum(self.homo_non_dup_depth[0:start]) + sum(self.homo_non_dup_depth[end:]))
-                
-    #             try:
-    #                 logger.debug(f"{self.name} -- {removed_dup} out of {tdk} duplicated kmers removed ({(100*removed_dup/(tdk)):.2f}%). {removed_ndup} out of {tndk} non_duplicated kmers removed({(100*removed_ndup/(tndk)):.2f}%). dnd dedup ratio is {(removed_dup / (removed_ndup)):.2f}")
-    #             except ZeroDivisionError:
-    #                 logger.debug(f"{self.name} -- {removed_dup} out of {tdk} duplicated kmers removed ({(100*removed_dup/(tdk+1)):.2f}%). {removed_ndup} out of {tndk} non_duplicated kmers removed({(100*removed_ndup/(tndk+1)):.2f}%). dnd dedup ratio is {(removed_dup / (1+removed_ndup)):.2f}")
-
-    #             # Only report sequence if over minimum sequence length
-    #             if len(self.sequence[start:end]) > self.min_sequence_len:
-    #                 return f">{self.name}\n{self.sequence[start:end]}\n",  [removed_dup, tdk, removed_ndup, tndk]
-    #             return "",  [tdk, tdk, tndk, tndk]
 
 
     def set_duplication_intervals(self, start, end):
@@ -273,15 +231,42 @@ class Contig():
         
 
     def calculate_homo_dup_depth(self):
+        """
+        Calculate the homozygous duplication depth for each position in the sequence.
+
+        Returns:
+            None
+        """
         for pos, kmer in self.homo_dup_kmers_pos:
             self.homo_dup_depth[pos] += 1
     
     def calculate_homo_non_dup_depth(self):
+        """
+        Calculate the homozygous non-duplication depth for each position in the sequence.
+
+        Returns:
+            None
+        """
         for pos, kmer in self.homo_non_dup_kmers_pos:
             self.homo_non_dup_depth[pos] += 1
 
     def __lt__(self, other):
+        """
+        Compare two contigs based on their names.
+
+        Args:
+            other (Contig): The other contig to compare to.
+
+        Returns:
+            bool: True if the current contig is less than the other contig, False otherwise.
+        """
         return self.name < other.name
 
     def __repr__(self):
+        """
+        Return a string representation of the contig.
+
+        Returns:
+            str: A string representation of the contig.
+        """
         return f"contig: {self.name} ({len(self.sequence)})"
