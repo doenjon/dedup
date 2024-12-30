@@ -1,44 +1,26 @@
 
 import os
 import sys
-import time
-import mmap
 import shutil
 import logging
+import cProfile
+import pstats
+import traceback
 import argparse
-import datetime
-import tempfile
 import subprocess
 from subprocess import run
 
-import cProfile
-import pstats
-import datetime
-
 import pandas as pd
-import numpy as np
-import seaborn as sns
-from statistics import mean
-from scipy.optimize import curve_fit
-import matplotlib.pyplot as plt
-from concurrent.futures import ProcessPoolExecutor
-
-
-from datasketch import MinHash, MinHashLSHEnsemble
-
 from Bio import SeqIO
-import plotly.express as px
+from concurrent.futures import ProcessPoolExecutor
+from datasketch import MinHash, MinHashLSHEnsemble
+from multiprocessing import Pool, Manager
 
 from contig import Contig
 from alignment import Alignment
 from logging_config import setup_logger
 from kmer_utilities import KmerUtil
 
-import multiprocessing
-from multiprocessing import Pool, Manager
-import pickle
-
-import traceback
 
 logger = setup_logger()
 
@@ -124,7 +106,6 @@ class Deduplicator():
         # Remove temporary directory
         if not self.params.save_tmp and os.path.exists(self.tmp_dir):
             shutil.rmtree(self.tmp_dir)
-            pass
 
     def dedup(self):
         '''
@@ -175,19 +156,56 @@ class Deduplicator():
         best_alignments_df.to_csv("best_alignments.paf", sep="\t", index=False, header=False)
 
         with open(f"deduplicated_contigs.fasta", "w") as seq_file:
-            with open(f"deduplicated_stats.csv", "w") as stats_file:
-                for c in self.contigs:
-                    seq, stats = c.get_non_duplicated_sequence()
-                    seq_file.write(seq)
+            # with open(f"deduplicated_stats.csv", "w") as stats_file:
+            for c in self.contigs:
+                seq = c.get_non_duplicated_sequence()
+                seq_file.write(seq)
                     # print(",".join(stats))
-                    e=0.000001 # prevent divide by zero
-                    stats.append(stats[0] / (stats[1] + e))
-                    stats.append(stats[2] / (stats[3] + e))
-                    stats.append(stats[0] / (stats[2] + e))
-                    stats_file.write(f"{c.name},{','.join([str(s) for s in stats])}\n")
+                    # e=0.000001 # prevent divide by zero
+                    # stats.append(stats[0] / (stats[1] + e))
+                    # stats.append(stats[2] / (stats[3] + e))
+                    # stats.append(stats[0] / (stats[2] + e))
+                    # stats_file.write(f"{c.name},{','.join([str(s) for s in stats])}\n")
+
+
+    def log_dedup_statistics(contig1, contig2, best_alignment):
+        """
+        Log the deduplication statistics for a pair of contigs.
+
+        Args:
+            contig1 (Contig): The first contig.
+            contig2 (Contig): The second contig.
+            best_alignment (dict): The best alignment between the two contigs.
+
+        Returns:
+            None
+        """
+        # Find the contig that is more duplicated 
+        contig1_percent_duplicated = (best_alignment["qend"] - best_alignment["qstart"]) / len(contig1.sequence)
+        contig2_percent_duplicated = (best_alignment["tend"] - best_alignment["tstart"]) / len(contig2.sequence)
+        
+        logger.debug("--------------------------------------------------------------------------------")
+        logger.debug(f"Deduplicating {contig1} and {contig2}")
+        logger.debug(f"{contig1} is {100*contig1_percent_duplicated:.2f}% duplicated by alignment")
+        logger.debug(f"{contig2} is {100*contig2_percent_duplicated:.2f}% duplicated by alignment")
+        
+        c1_homo_dup_aln = contig1.homo_dup_depth[best_alignment["qstart"]:best_alignment["qend"]]
+        c1_homo_dup_tot = contig1.homo_dup_depth[:]
+        c1_homo_non_dup_aln = contig1.homo_non_dup_depth[best_alignment["qstart"]:best_alignment["qend"]]
+        c1_homo_non_dup_tot = contig1.homo_non_dup_depth[:]
+        logger.debug(f"{contig1} alignment has {sum(c1_homo_dup_aln)}/{sum(c1_homo_dup_tot)} duplicated and {sum(c1_homo_non_dup_aln)}/{sum(c1_homo_non_dup_tot)} non duplicated kmers")
+        
+        c2_homo_dup_aln = contig2.homo_dup_depth[best_alignment["tstart"]:best_alignment["tend"]]
+        c2_homo_dup_tot = contig2.homo_dup_depth[:]
+        c2_homo_non_dup_aln = contig2.homo_non_dup_depth[best_alignment["tstart"]:best_alignment["tend"]]
+        c2_homo_non_dup_tot = contig2.homo_non_dup_depth[:]
+
+        logger.debug(f"{contig2} alignment has {sum(c2_homo_dup_aln)}/{sum(c2_homo_dup_tot)} duplicated and {sum(c2_homo_non_dup_aln)}/{sum(c2_homo_non_dup_tot)} non duplicated kmers")
+        
+        logger.debug(best_alignment)
 
     @staticmethod
-    def dedup_pair(contig1, contig2, alignment_df, alignment_max_gap=25000, alignment_match_weight=0.2, aln_coverage=0):
+    def dedup_pair(contig1, contig2, alignment_df, alignment_max_gap, alignment_match_weight, aln_coverage):
         """
         Analyse the alignment and duplication between two contigs, 
         if they can be deduplicated, mark appropriate regions for deduplication
@@ -210,102 +228,24 @@ class Deduplicator():
 
         # If there is no alignment, quit
         if best_alignment is None:
-            logger.debug("no alignment found -- have not handled this")
+            logger.debug("no valid alignment found. Skipping deduplication")
             return
 
+        # Log the deduplication statistics
+        Deduplicator.log_dedup_statistics(contig1, contig2, best_alignment)
+        
         # Find the contig that is more duplicated 
         contig1_percent_duplicated = (best_alignment["qend"] - best_alignment["qstart"]) / len(contig1.sequence)
         contig2_percent_duplicated = (best_alignment["tend"] - best_alignment["tstart"]) / len(contig2.sequence)
         
-        logger.debug("--------------------------------------------------------------------------------")
-        logger.debug(f"Deduplicating {contig1} and {contig2}")
-        logger.debug(f"{contig1} is {100*contig1_percent_duplicated:.2f}% duplicated by alignment")
-        logger.debug(f"{contig2} is {100*contig2_percent_duplicated:.2f}% duplicated by alignment")
-        
-        
-        c1_homo_dup_aln = contig1.homo_dup_depth[best_alignment["qstart"]:best_alignment["qend"]]
-        c1_homo_dup_tot = contig1.homo_dup_depth[:]
-        c1_homo_non_dup_aln = contig1.homo_non_dup_depth[best_alignment["qstart"]:best_alignment["qend"]]
-        c1_homo_non_dup_tot = contig1.homo_non_dup_depth[:]
-        logger.debug(f"{contig1} alignment has {sum(c1_homo_dup_aln)}/{sum(c1_homo_dup_tot)} duplicated and {sum(c1_homo_non_dup_aln)}/{sum(c1_homo_non_dup_tot)} non duplicated kmers")
-        
-        c2_homo_dup_aln = contig2.homo_dup_depth[best_alignment["tstart"]:best_alignment["tend"]]
-        c2_homo_dup_tot = contig2.homo_dup_depth[:]
-        c2_homo_non_dup_aln = contig2.homo_non_dup_depth[best_alignment["tstart"]:best_alignment["tend"]]
-        c2_homo_non_dup_tot = contig2.homo_non_dup_depth[:]
-
-        logger.debug(f"{contig2} alignment has {sum(c2_homo_dup_aln)}/{sum(c2_homo_dup_tot)} duplicated and {sum(c2_homo_non_dup_aln)}/{sum(c2_homo_non_dup_tot)} non duplicated kmers")
-        
-        logger.debug(best_alignment)
-        
-        # Get the contig to deduplicate, along with the start and end of the duplicated region
-        contig_to_deduplicate = None
-        deduplicate_idx = -1
         if contig1_percent_duplicated > contig2_percent_duplicated:
-            contig_to_deduplicate = contig1
-            contig_percent_duplicated = contig1_percent_duplicated
-            start = best_alignment['qstart']
-            end = best_alignment['qend']
-            deduplicate_idx = 0
+            dedup_success = contig1.set_duplication_intervals(best_alignment["qstart"], best_alignment["qend"])
+            if not dedup_success: # Deduplication on contig 1 failed, try contig 2
+                contig2.set_duplication_intervals(best_alignment["tstart"], best_alignment["tend"])
         else:
-            contig_to_deduplicate = contig2
-            contig_percent_duplicated = contig2_percent_duplicated
-            start = best_alignment['tstart']
-            end = best_alignment['tend']
-            deduplicate_idx = 1
-
-        # HACK
-        def set_deduplication_interval(contig_to_deduplicate, contig_percent_duplicated, deduplicate_idx, best_alignment, start, end):
-            # If over threshold, deduplicate the whole contig
-            # full_duplication_threshold = self.full_duplication_threshold # TODO: fix
-            # end_buffer = self.end_buffer
-
-            full_duplication_threshold = 0.9 # TODO: fix
-            end_buffer = 25000
-            if contig_percent_duplicated > full_duplication_threshold:
-                # contig_to_deduplicate.duplicated = [(0, len(contig_to_deduplicate.sequence))]
-                logger.debug(f"Deduplicating whole contig {contig_to_deduplicate}")
-
-                return (deduplicate_idx, (0, len(contig_to_deduplicate.sequence)), best_alignment)
-            
-            # If not over threshold, but close to an edge, deduplicate to the edge
-            else:
-                if start < end_buffer:
-                    logger.debug(f"Deduplicating start of contig {contig_to_deduplicate}")
-                    # contig_to_deduplicate.duplicated.append((0, end))
-                    return (deduplicate_idx, (0, end), best_alignment)
-                    # print(contig_to_deduplicate.duplicated)
-                elif end > len(contig_to_deduplicate.sequence) - end_buffer:
-                    logger.debug(f"Deduplicating end of contig {contig_to_deduplicate}")
-                    return (deduplicate_idx, (start, len(contig_to_deduplicate.sequence)), best_alignment)
-                    # contig_to_deduplicate.duplicated.append((start, len(contig_to_deduplicate.sequence)))
-                    # print(contig_to_deduplicate.duplicated)
-
-                else:
-                    logger.info(f"What to deduplicate {contig_to_deduplicate}, but can't figure out how")
-            
-            # logger.debug("***Failed to deduplicate***")
-            return None
-
-        result = set_deduplication_interval(contig_to_deduplicate, contig_percent_duplicated, deduplicate_idx, best_alignment, start, end)
-        
-        if not result:
-
-            if contig1_percent_duplicated > contig2_percent_duplicated:
-                contig_to_deduplicate = contig2
-                contig_percent_duplicated = contig2_percent_duplicated
-                start = best_alignment['tstart']
-                end = best_alignment['tend']
-                deduplicate_idx = 1
-            else:
-                contig_to_deduplicate = contig1
-                contig_percent_duplicated = contig1_percent_duplicated
-                start = best_alignment['qstart']
-                end = best_alignment['qend']
-                deduplicate_idx = 0
-
-            result = set_deduplication_interval(contig_to_deduplicate, contig_percent_duplicated, deduplicate_idx, best_alignment, start, end)
-        return result
+            dedup_success = contig2.set_duplication_intervals(best_alignment["tstart"], best_alignment["tend"])
+            if not dedup_success: # Deduplication on contig 2 failed, try contig 1
+                contig1.set_duplication_intervals(best_alignment["qstart"], best_alignment["qend"])
 
     @staticmethod
     def get_hash(contig):
@@ -354,8 +294,7 @@ class Deduplicator():
                 try:
                     results.remove(contig)  # Remove the contig itself from the result
                 except:
-                    # print(f"{contig} not in it's own hash")
-                    pass
+                    logging.debug(f"{contig} not found in it's own hash -- this may happen very rarely")
 
                 if results:
                     for contig_2 in results:
@@ -365,10 +304,9 @@ class Deduplicator():
                         logging.debug(f"Jaccard similarity between {contig} and {contig_2}: {minhash.jaccard(hashes[contig_2])}")
                         logging.debug(f"c1_containment: {c1_containment}")
                         logging.debug(f"c2_containment: {c2_containment}")
-                        # Always make the tuples in the same order
+
                         if c1_containment > containment_threshold or c2_containment > containment_threshold:
                             logger.debug(f"Added contig pair {contig} - {contig_2} to candidates")
-                            
                             # Add in deterministic order to allow deduplication later - both contigs may find the other
                             if contig < contig_2:
                                 candidate_pairs.append((contig, contig_2))
@@ -440,7 +378,7 @@ class Deduplicator():
             p = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
             retval = p.wait()
         else:
-            logger.info(f"\tSkipping alignment because result already exist")
+            logger.info(f"Skipping alignment because result already exist")
         
         logger.info(f"parsing alignment file: {alignment_file}")
 
@@ -505,7 +443,7 @@ class Deduplicator():
         contigs = []
 
         for fasta in SeqIO.parse(open(assembly), 'fasta'):
-            contig = Contig(fasta.id, fasta.seq)
+            contig = Contig(fasta.id, fasta.seq, self.params)
             contigs.append(contig)
         
         return contigs
@@ -596,6 +534,12 @@ def parse_args():
                         type=int,
                         help='If contig is marked duplicated within end_buffer base pairs of edge of contig, extend duplication to edge (default: 25000)',
                         default=25000,
+                        required=False)
+    
+    advanced_options.add_argument('--min_sequence_length',
+                        type=int,
+                        help='Minimum sequence length to output after deduplication (default: 10000)',
+                        default=10000,
                         required=False)
 
     advanced_options.add_argument('--duplicate_kmer_lower_count',

@@ -20,7 +20,6 @@ class KmerUtil():
         self.homozygous_upper_bound     = params.homozygous_upper_bound
         self.duplicate_kmer_lower_count = params.duplicate_kmer_lower_count
         self.duplicate_kmer_upper_count = params.duplicate_kmer_upper_count
-
         self.min_kmer_depth = params.min_kmer_depth
         self.max_kmer_depth = params.max_kmer_depth
 
@@ -115,7 +114,7 @@ class KmerUtil():
                 logger.critical(f"make_kmer_db ret: {retval}")
                 sys.exit(retval)
         else:
-            logger.info(f"\tSkipping because results already exist")
+            logger.info(f"Skipping because results already exist")
 
         return db_path
 
@@ -144,7 +143,7 @@ class KmerUtil():
                 sys.exit(retval)
 
         else:
-            logger.info(f"\tSkipping because results already exist")
+            logger.info(f"Skipping because results already exist")
 
         return out_file
 
@@ -222,6 +221,6 @@ class KmerUtil():
                 sys.exit(retval)
 
         else:
-            logger.info(f"\tSkipping because results already exist")
+            logger.info(f"Skipping because results already exist")
 
         return f"{basename}.sorted.bam"

@@ -17,7 +17,7 @@ class Contig():
     Represents a contig with its name, sequence, and other attributes.
     """
     
-    def __init__(self, name, sequence):
+    def __init__(self, name, sequence, params):
             """
             Initialize a Contig object.
 
@@ -48,7 +48,9 @@ class Contig():
 
             self.duplicated = []
 
-            self.min_sequence_len = 5000
+            self.min_sequence_len = params.min_sequence_length
+            self.full_duplication_threshold = params.full_duplication_threshold
+            self.end_buffer = params.end_buffer
 
     def calculate_dnd_ratio(self):
         """
@@ -130,64 +132,145 @@ class Contig():
             line = line.decode('UTF-8').strip().split()
             self.homo_dup_kmers.append(line[0])        
 
-    def get_non_duplicated_sequence(self):
-            """
-            Returns the non-duplicated sequence based on the presence of duplicated intervals.
 
-            If the sequence is not duplicated, it returns the sequence as is.
-            If the sequence is completely duplicated, it returns an empty string.
-            If the sequence is 5' duplicated, it returns the sequence starting from the end of the duplication interval.
-            If the sequence is 3' duplicated, it returns the sequence up to the start of the duplication interval.
+    def merge_overlapping_duplicates(self):
 
-            Returns:
-                str: The non-duplicated sequence.
-            """
-            logger.debug(f"{self.name} duplicated on {self.duplicated}")
-           
-            # TODO handle multiple deduplication intervals
+        if len(self.duplicated) <= 1:
+            return self.duplicated
+        
+        # Sort dup intervals by start index
+        self.duplicated.sort(key=lambda x: x[0])
 
-            tdk = sum(self.homo_dup_depth)
-            tndk = sum(self.homo_non_dup_depth)
+        merged = [self.duplicated[0]]
+        for current_start, current_end in self.duplicated[1:]:
+            last_end = merged[-1][1]
 
-            if not self.duplicated:
-                logger.debug(f"{self.name} -- 0 out of {tdk} kmers duplicated removed. 0 out of {tndk} non_duplicated kmers removed.")
-                return f">{self.name}\n{self.sequence}\n", [0, tdk, 0, tndk]
+            if current_start <= last_end:
+                merged[-1] = (merged[-1][0], max(last_end, current_end))
             else:
+                merged.append((current_start, current_end))
 
-                # If completely duplicated
-                for interval in self.duplicated:
-                    if interval[1] - interval[0] == len(self.sequence):
-                        try: # catch divide by zero
-                            logger.debug(f"{self.name} -- {tdk} out of {tdk} duplicated kmers removed. {tndk} out of {tndk} non_duplicated kmers removed. dnd dedup ratio is {(tdk / (tndk)):.2f}")
-                        except ZeroDivisionError:
-                            logger.debug(f"{self.name} -- {tdk} out of {tdk} duplicated kmers removed. {tndk} out of {tndk} non_duplicated kmers removed. dnd dedup ratio is {(tdk / (tndk + 1)):.2f}")
+        return merged
+
+    def get_non_duplicated_sequence(self):
+
+        self.duplicated = self.merge_overlapping_duplicates()
+
+        # Get sequence to include
+        current_start = 0
+        included_seq = []
+        for start, end in self.duplicated:
+            
+            if start > current_start:
+                included_seq.append(self.sequence[current_start:start])
+            current_start = end
+
+        if current_start < len(self.sequence):
+            included_seq.append(self.sequence[current_start:])
+
+        # Write sequence to file
+        return_seq = []
+        for i, seq in enumerate(included_seq):
+            return_seq.append(f">{self.name}_{i}\n{seq}\n")
+
+        return_str = "".join(return_seq)
+        return return_str
+
+    # def get_non_duplicated_sequence(self):
+    #         """
+    #         Returns the non-duplicated sequence based on the presence of duplicated intervals.
+
+    #         If the sequence is not duplicated, it returns the sequence as is.
+    #         If the sequence is completely duplicated, it returns an empty string.
+    #         If the sequence is 5' duplicated, it returns the sequence starting from the end of the duplication interval.
+    #         If the sequence is 3' duplicated, it returns the sequence up to the start of the duplication interval.
+
+    #         Returns:
+    #             str: The non-duplicated sequence.
+    #         """
+    #         logger.debug(f"{self.name} duplicated on {self.duplicated}")
+           
+    #         # TODO handle multiple deduplication intervals
+
+    #         tdk = sum(self.homo_dup_depth)
+    #         tndk = sum(self.homo_non_dup_depth)
+
+    #         if not self.duplicated:
+    #             logger.debug(f"{self.name} -- 0 out of {tdk} kmers duplicated removed. 0 out of {tndk} non_duplicated kmers removed.")
+    #             return f">{self.name}\n{self.sequence}\n", [0, tdk, 0, tndk]
+    #         else:
+
+    #             # If completely duplicated
+    #             for interval in self.duplicated:
+    #                 if interval[1] - interval[0] == len(self.sequence):
+    #                     try: # catch divide by zero
+    #                         logger.debug(f"{self.name} -- {tdk} out of {tdk} duplicated kmers removed. {tndk} out of {tndk} non_duplicated kmers removed. dnd dedup ratio is {(tdk / (tndk)):.2f}")
+    #                     except ZeroDivisionError:
+    #                         logger.debug(f"{self.name} -- {tdk} out of {tdk} duplicated kmers removed. {tndk} out of {tndk} non_duplicated kmers removed. dnd dedup ratio is {(tdk / (tndk + 1)):.2f}")
                         
-                        return "",  [tdk, tdk, tndk, tndk]
+    #                     return "",  [tdk, tdk, tndk, tndk]
 
-                # Otherwise, find start and end of non-duplicated sequence
-                # get 5' start
-                start = 0
-                for interval in self.duplicated:
-                    if 0 in interval and interval[1] > start:
-                        start = interval[1]
+    #             # Otherwise, find start and end of non-duplicated sequence
+    #             # get 5' start
+    #             start = 0
+    #             for interval in self.duplicated:
+    #                 if 0 in interval and interval[1] > start:
+    #                     start = interval[1]
 
-                end = len(self.sequence)
-                for interval in self.duplicated:
-                    if len(self.sequence) in interval and interval[0] < end:
-                        end = interval[0]
+    #             end = len(self.sequence)
+    #             for interval in self.duplicated:
+    #                 if len(self.sequence) in interval and interval[0] < end:
+    #                     end = interval[0]
                 
-                removed_dup = (sum(self.homo_dup_depth[0:start]) + sum(self.homo_dup_depth[end:]))
-                removed_ndup = (sum(self.homo_non_dup_depth[0:start]) + sum(self.homo_non_dup_depth[end:]))
+    #             removed_dup = (sum(self.homo_dup_depth[0:start]) + sum(self.homo_dup_depth[end:]))
+    #             removed_ndup = (sum(self.homo_non_dup_depth[0:start]) + sum(self.homo_non_dup_depth[end:]))
                 
-                try:
-                    logger.debug(f"{self.name} -- {removed_dup} out of {tdk} duplicated kmers removed ({(100*removed_dup/(tdk)):.2f}%). {removed_ndup} out of {tndk} non_duplicated kmers removed({(100*removed_ndup/(tndk)):.2f}%). dnd dedup ratio is {(removed_dup / (removed_ndup)):.2f}")
-                except ZeroDivisionError:
-                    logger.debug(f"{self.name} -- {removed_dup} out of {tdk} duplicated kmers removed ({(100*removed_dup/(tdk+1)):.2f}%). {removed_ndup} out of {tndk} non_duplicated kmers removed({(100*removed_ndup/(tndk+1)):.2f}%). dnd dedup ratio is {(removed_dup / (1+removed_ndup)):.2f}")
+    #             try:
+    #                 logger.debug(f"{self.name} -- {removed_dup} out of {tdk} duplicated kmers removed ({(100*removed_dup/(tdk)):.2f}%). {removed_ndup} out of {tndk} non_duplicated kmers removed({(100*removed_ndup/(tndk)):.2f}%). dnd dedup ratio is {(removed_dup / (removed_ndup)):.2f}")
+    #             except ZeroDivisionError:
+    #                 logger.debug(f"{self.name} -- {removed_dup} out of {tdk} duplicated kmers removed ({(100*removed_dup/(tdk+1)):.2f}%). {removed_ndup} out of {tndk} non_duplicated kmers removed({(100*removed_ndup/(tndk+1)):.2f}%). dnd dedup ratio is {(removed_dup / (1+removed_ndup)):.2f}")
 
-                # Only report sequence if over minimum sequence length
-                if len(self.sequence[start:end]) > self.min_sequence_len:
-                    return f">{self.name}\n{self.sequence[start:end]}\n",  [removed_dup, tdk, removed_ndup, tndk]
-                return "",  [tdk, tdk, tndk, tndk]
+    #             # Only report sequence if over minimum sequence length
+    #             if len(self.sequence[start:end]) > self.min_sequence_len:
+    #                 return f">{self.name}\n{self.sequence[start:end]}\n",  [removed_dup, tdk, removed_ndup, tndk]
+    #             return "",  [tdk, tdk, tndk, tndk]
+
+
+    def set_duplication_intervals(self, start, end):
+        """
+        Set the duplication intervals for the contig.
+
+        Args:
+            start (int): The start of the duplication interval.
+            end (int): The end of the duplication interval.
+
+        Returns:
+            Success (Bool): True if successful, False otherwise.
+        """
+
+        # Check if contig is mostly duplicated
+        aln_fraction = (end - start)/len(self.sequence)
+        if aln_fraction >= self.full_duplication_threshold:
+            self.duplicated.append((0, len(self.sequence)))
+
+        # Check if duplication is close to ends
+        duplication_start = start
+        duplication_end = end
+        if duplication_start < self.end_buffer:
+            duplication_start = 0
+        if duplication_end > len(self.sequence) - self.end_buffer:
+            duplication_end = len(self.sequence)
+
+        # Check if duplication meets end criteria
+        if not duplication_start == 0 and not duplication_end == len(self.sequence):
+            logging.debug("duplication interval does not meet end criteria")
+            logging.debug("Want to deduplicate internal duplication - but not allowed to")
+            return False
+        
+        else:
+            self.duplicated.append((duplication_start, duplication_end))
+            return True
+        
 
     def calculate_homo_dup_depth(self):
         for pos, kmer in self.homo_dup_kmers_pos:

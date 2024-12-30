@@ -32,5 +32,4 @@ def setup_logger(name="dedup_logger", log_file="dedup.log", verbosity=logging.DE
     logger.addHandler(console_handler)
     logger.propagate = False  # Prevent duplicate logs
 
-
     return logger
