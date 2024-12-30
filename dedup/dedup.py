@@ -96,8 +96,7 @@ class Deduplicator():
 
         self.tmp_dir = params.tmp_dir
         if os.path.exists(self.tmp_dir):
-            logging.warning(f"{self.tmp_dir} already exists")
-            # sys.exit(1)
+            raise FileExistsError(f"{self.tmp_dir} already exists")
         else:
             os.makedirs(self.tmp_dir)
 

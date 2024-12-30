@@ -135,14 +135,14 @@ class KmerUtil():
             cmd (str): Command to run
             
         Raises:
-            SystemExit: If command fails
+            RuntimeError: If command fails
         """
         logger.info(cmd)
         proc = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         retval = proc.wait()
         if retval:
             logger.critical(f"Command failed with return code {retval}: {cmd}")
-            sys.exit(retval)
+            raise RuntimeError(f"Command failed with return code {retval}: {cmd}")
 
     def get_kmers_by_contig(self, bam):
         """
@@ -201,7 +201,7 @@ class KmerUtil():
             retval = p.wait()
             if retval:
                 logger.critical(f"filter_kmer_db ret: {retval}")
-                sys.exit(retval)
+                raise RuntimeError(f"filter_kmer_db failed with return code {retval}")
 
         else:
             logger.info(f"Skipping because results already exist")
@@ -227,7 +227,7 @@ class KmerUtil():
         retval = p.wait()
         if retval:
             logger.critical(f"write_kmers ret: {retval}")
-            sys.exit(retval)
+            raise RuntimeError(f"write_kmers_to_fasta failed with return code {retval}")
 
         out_file_path = os.path.join(self.tmp_dir, f"{outname}")
         with open(tmp, 'r') as infile, open(out_file_path, 'w') as outfile:
@@ -262,7 +262,7 @@ class KmerUtil():
             retval = p.wait()
             if retval:
                 logger.critical(f"map_kmers ret: {retval}")
-                sys.exit(retval)
+                raise RuntimeError(f"map_kmers failed with return code {retval}")
 
         cmd = f'''
         bwa mem -t {self.threads} -k {self.kmer_size} -T {self.kmer_size} -a -c 500 {self.assembly} {kmer_fasta} > {basename}.sam
@@ -279,7 +279,7 @@ class KmerUtil():
             retval = p.wait()
             if retval:
                 logger.critical(f"map_kmers ret: {retval}")
-                sys.exit(retval)
+                raise RuntimeError(f"map_kmers failed with return code {retval}")
 
         else:
             logger.info(f"Skipping because results already exist")
