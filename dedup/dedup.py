@@ -1,4 +1,3 @@
-
 import os
 import sys
 import time
@@ -29,10 +28,10 @@ from datasketch import MinHash, MinHashLSHEnsemble
 from Bio import SeqIO
 import plotly.express as px
 
-from contig import Contig
-from alignment import Alignment
-from logging_config import setup_logger
-from kmer_utilities import KmerUtil
+from dedup.contig import Contig
+from dedup.alignment import Alignment
+from dedup.logging_config import setup_logger
+from dedup.kmer_utilities import KmerUtil
 
 import multiprocessing
 from multiprocessing import Pool, Manager
@@ -645,8 +644,8 @@ def parse_args():
 
     return args
 
-if __name__ == "__main__":
-
+def main():
+    
     profiler = cProfile.Profile()
     profiler.enable()
 
@@ -675,3 +674,7 @@ if __name__ == "__main__":
     # Create a Stats object
     stats = pstats.Stats(profiler)
     stats.strip_dirs().sort_stats('cumulative').print_stats(100)
+
+if __name__ == "__main__":
+
+    main()

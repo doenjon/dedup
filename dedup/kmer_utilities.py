@@ -2,7 +2,7 @@ import os
 import sys
 import logging
 import subprocess
-from kmer_spectrum import get_homozygous_kmer_range
+from dedup.kmer_spectrum import get_homozygous_kmer_range
 
 
 logger = logging.getLogger("dedup_logger")
