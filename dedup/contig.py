@@ -18,39 +18,31 @@ class Contig():
     """
     
     def __init__(self, name, sequence, params):
-            """
-            Initialize a Contig object.
+        """
+        Initialize a Contig object.
 
-            Args:
-                name (str): The name of the contig.
-                sequence (str): The sequence of the contig.
+        Args:
+            name (str): The name of the contig.
+            sequence (str): The sequence of the contig.
+            params: Parameters object containing various settings.
+        """
+        self.name = name
+        self.sequence = sequence
 
-            Attributes:
-                name (str): The name of the contig.
-                sequence (str): The sequence of the contig.
-                homo_dup_depth (list): List to store the depths of homozygous duplicated contigs.
-                homo_non_dup_depth (list): List to store the depths of homozygous non-duplicated contigs.
-                homo_dup_kmers (list): List to store the k-mers of homozygous duplicated contigs.
-                dnd_ratio (list): List to store the duplication/non-duplication ratio of contigs.
-                duplicated (list): List to store the duplicated status of contigs.
-            """
-            self.name = name
-            self.sequence = sequence
+        self.homo_dup_depth = [0] * len(sequence)
+        self.homo_non_dup_depth = [0] * len(sequence)
 
-            self.homo_dup_depth = [0] * len(sequence)
-            self.homo_non_dup_depth = [0] * len(sequence)
+        self.homo_dup_kmers_pos = []
+        self.homo_non_dup_kmers_pos = []
+    
+        self.homo_dup_kmers = []
+        self.dnd_ratio = []
 
-            self.homo_dup_kmers_pos = []
-            self.homo_non_dup_kmers_pos = []
-        
-            self.homo_dup_kmers = []
-            self.dnd_ratio = []
+        self.duplicated = []
 
-            self.duplicated = []
-
-            self.min_sequence_len = params.min_sequence_length
-            self.full_duplication_threshold = params.full_duplication_threshold
-            self.end_buffer = params.end_buffer
+        self.min_sequence_len = params.min_sequence_length
+        self.full_duplication_threshold = params.full_duplication_threshold
+        self.end_buffer = params.end_buffer
 
     def calculate_dnd_ratio(self):
         """

@@ -33,13 +33,14 @@ class Alignment:
         """
         self.contig1 = contig1
         self.contig2 = contig2
+        self.paf_df = paf_df
         self.max_gap = max_gap
         self.match_weight = match_weight
         self.aln_coverage = aln_coverage
 
         self.graph = nx.DiGraph()
 
-        simple_paf_df = self.simplify_paf(paf_df)
+        simple_paf_df = self.simplify_paf(self.paf_df)
         self.parse_paf(simple_paf_df)
 
     def parse_paf(self, paf_df):
@@ -58,11 +59,17 @@ class Alignment:
             c1_dnd_score = (contig1_end - contig1_start) * np.nanmean(self.contig1.dnd_ratio[contig1_start:contig1_end])
             c2_dnd_score = (contig2_end - contig2_start) * np.nanmean(self.contig2.dnd_ratio[contig2_start:contig2_end])
 
+            # Debug: Print scores
+            print(f"Row: {row}")
+            print(f"c1_dnd_score: {c1_dnd_score}, c2_dnd_score: {c2_dnd_score}")
+
             if c1_dnd_score >= self.aln_coverage * (contig1_end - contig1_start) and \
                c2_dnd_score >= self.aln_coverage * (contig2_end - contig2_start):
                 score = c1_dnd_score + c2_dnd_score + self.match_weight * matching
                 if score > 0:
                     self.graph.add_node((contig1_start, contig1_end, contig2_start, contig2_end, direction), score=score)
+                    # Debug: Print node added
+                    print(f"Node added: {(contig1_start, contig1_end, contig2_start, contig2_end, direction)}")
 
         self.create_DAG()
 
