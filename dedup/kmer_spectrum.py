@@ -178,6 +178,7 @@ def fit_kmer_spectrum(data, min_kmer_depth, max_kmer_depth):
               (1e-6, 100),  # sigma2
               (1e-6, 10)]  # A2
 
+
     # Perform global optimization
     result = differential_evolution(loss_function, bounds, args=(x, y))
 
@@ -186,9 +187,9 @@ def fit_kmer_spectrum(data, min_kmer_depth, max_kmer_depth):
         logger.error(f"Consider providing homozygous_lower_bound and homozygous_upper_bound manually.")
         raise RuntimeError(f"Optimization failed: {result.message}")
 
-    if result.fun > 2e-1:
+    warning_threshold = 1  
+    if result.fun > warning_threshold:
         logger.warning(f"Optimizer may not have found a good model of kmer-spectrum -- suggest manually checking curve fit (kmer_spectrum_fit.png)")
-        logger.warning(f"SSE: {result.fun}")
         logger.warning(f"Consider providing homozygous_lower_bound and homozygous_upper_bound manually.")
 
     params = result.x
@@ -221,7 +222,5 @@ def fit_kmer_spectrum(data, min_kmer_depth, max_kmer_depth):
     # Set bounds at minimum between peaks and 2 standard deviations above homozygous mean
     homo_left_bound = round(find_minimum_between_peaks(*params))
     homo_right_bound = round(mean_homo + 2*std_homo)
-
-    #TODO @enhancement : automatic check that fit is good
 
     return homo_left_bound, homo_right_bound

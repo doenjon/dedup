@@ -8,12 +8,14 @@ import traceback
 import argparse
 import subprocess
 from subprocess import run
+import warnings
 
 import pandas as pd
 from Bio import SeqIO
 from concurrent.futures import ProcessPoolExecutor
 from datasketch import MinHash, MinHashLSHEnsemble
 from multiprocessing import Pool, Manager
+import numpy as np
 
 from dedup.contig import Contig
 from dedup.alignment import Alignment
@@ -307,6 +309,27 @@ class Deduplicator():
             hash.update(kmer.encode('utf8'))
         return hash
 
+    def validate_kmers_for_hashing(self, kmers, data_name="Data"):
+        """
+        Validate k-mers to ensure they are suitable for hashing.
+
+        Args:
+            kmers (iterable): The k-mers to validate.
+            data_name (str): The name of the data for logging purposes.
+
+        Raises:
+            ValueError: If the k-mers are empty or have zero sizes.
+        """
+        if not kmers or len(kmers) == 0:
+            logger.info(f"{data_name} has no duplicated k-mers, skipping hashing.")
+            return False
+        
+        # Check for zero sizes if applicable
+        if any(len(kmer) == 0 for kmer in kmers):
+            raise ValueError(f"{data_name} contains zero-length k-mers")
+        
+        return True
+
     def find_candidate_pairs_hash(self, containment_threshold=0.05):
         """
         Find candidate pairs of contigs that potentially contain duplicates.
@@ -328,9 +351,12 @@ class Deduplicator():
 
         with ProcessPoolExecutor() as executor:
             results = list(executor.map(self.get_hash, [c for c in self.contigs]))
-            # results = list(executor.map(lambda contig: contig.get_hash(), self.contigs))
 
         for contig, hash in zip(self.contigs, results):
+            # Validate the k-mers before using them
+            if not self.validate_kmers_for_hashing(contig.homo_dup_kmers, f"Contig {contig.name} homo_dup_kmers"):
+                continue  # Skip this contig if validation fails
+
             hashes[contig] = hash
             index.append((contig, hash, len(contig.homo_dup_kmers)))
 
@@ -346,7 +372,7 @@ class Deduplicator():
                 try:
                     results.remove(contig)  # Remove the contig itself from the result
                 except:
-                    logging.debug(f"{contig} not found in it's own hash -- this may happen very rarely")
+                    logging.debug(f"{contig} not found in its own hash -- this may happen very rarely")
 
                 if results:
                     for contig_2 in results:
@@ -365,7 +391,7 @@ class Deduplicator():
                             else:
                                 candidate_pairs.append((contig_2, contig))
 
-        candidate_pairs = list(set(candidate_pairs)) # remove duplicates
+        candidate_pairs = list(set(candidate_pairs))  # remove duplicates
         return candidate_pairs
 
     def analyze_kmers(self):
@@ -575,8 +601,8 @@ def parse_args():
     parser.add_argument('--log_level',
                         type=str,
                         choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'],
-                        help='Set the logging level (default: INFO)',
-                        default='DEBUG',
+                        help='Set the logging level (default: WARNING)',
+                        default='WARNING',
                         required=False)
     
     advanced_options = parser.add_argument_group('Advanced Options')
@@ -681,7 +707,9 @@ def main():
 
     # Create a Stats object
     stats = pstats.Stats(profiler)
-    stats.strip_dirs().sort_stats('cumulative').print_stats(100)
+    if log_level == logging.DEBUG:
+        stats.strip_dirs().sort_stats('cumulative').print_stats(100)
+
 
 if __name__ == "__main__":
 

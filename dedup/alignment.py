@@ -56,20 +56,25 @@ class Alignment:
             direction = row['strand']
             matching = row['nmatch']
 
-            c1_dnd_score = (contig1_end - contig1_start) * np.nanmean(self.contig1.dnd_ratio[contig1_start:contig1_end])
-            c2_dnd_score = (contig2_end - contig2_start) * np.nanmean(self.contig2.dnd_ratio[contig2_start:contig2_end])
+            # Check if the slice has valid (non-NaN) values before calculating the mean
+            c1_slice = self.contig1.dnd_ratio[contig1_start:contig1_end]
+            c2_slice = self.contig2.dnd_ratio[contig2_start:contig2_end]
 
-            # Debug: Print scores
-            print(f"Row: {row}")
-            print(f"c1_dnd_score: {c1_dnd_score}, c2_dnd_score: {c2_dnd_score}")
+            if np.isfinite(c1_slice).any():
+                c1_dnd_score = (contig1_end - contig1_start) * np.nanmean(c1_slice)
+            else:
+                c1_dnd_score = 0
+
+            if np.isfinite(c2_slice).any():
+                c2_dnd_score = (contig2_end - contig2_start) * np.nanmean(c2_slice)
+            else:
+                c2_dnd_score = 0
 
             if c1_dnd_score >= self.aln_coverage * (contig1_end - contig1_start) and \
                c2_dnd_score >= self.aln_coverage * (contig2_end - contig2_start):
                 score = c1_dnd_score + c2_dnd_score + self.match_weight * matching
                 if score > 0:
                     self.graph.add_node((contig1_start, contig1_end, contig2_start, contig2_end, direction), score=score)
-                    # Debug: Print node added
-                    print(f"Node added: {(contig1_start, contig1_end, contig2_start, contig2_end, direction)}")
 
         self.create_DAG()
 
