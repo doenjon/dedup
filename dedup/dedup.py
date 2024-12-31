@@ -1,43 +1,25 @@
 import os
 import sys
-import time
-import mmap
 import shutil
 import logging
+import cProfile
+import pstats
+import traceback
 import argparse
-import datetime
-import tempfile
 import subprocess
 from subprocess import run
 
-import cProfile
-import pstats
-import datetime
-
 import pandas as pd
-import numpy as np
-import seaborn as sns
-from statistics import mean
-from scipy.optimize import curve_fit
-import matplotlib.pyplot as plt
-from concurrent.futures import ProcessPoolExecutor
-
-
-from datasketch import MinHash, MinHashLSHEnsemble
-
 from Bio import SeqIO
-import plotly.express as px
+from concurrent.futures import ProcessPoolExecutor
+from datasketch import MinHash, MinHashLSHEnsemble
+from multiprocessing import Pool, Manager
 
 from dedup.contig import Contig
 from dedup.alignment import Alignment
 from dedup.logging_config import setup_logger
 from dedup.kmer_utilities import KmerUtil
 
-import multiprocessing
-from multiprocessing import Pool, Manager
-import pickle
-
-import traceback
 
 logger = setup_logger()
 
@@ -114,16 +96,18 @@ class Deduplicator():
 
         self.tmp_dir = params.tmp_dir
         if os.path.exists(self.tmp_dir):
-            logging.warning(f"{self.tmp_dir} already exists")
-            # sys.exit(1)
+            logger.info(f"{self.tmp_dir} already exists")
         else:
             os.makedirs(self.tmp_dir)
 
-    def __del__(self):
-        # Remove temporary directory
-        if not self.params.save_tmp and os.path.exists(self.tmp_dir):
-            shutil.rmtree(self.tmp_dir)
-            pass
+        if not os.path.exists(assembly):
+            raise FileNotFoundError(f"Assembly file not found: {assembly}")
+        if not os.path.exists(reads):
+            raise FileNotFoundError(f"Reads file not found: {reads}")
+        if not 0 < params.containment_threshold <= 1:
+            raise ValueError("containment_threshold must be between 0 and 1")
+
+
 
     def dedup(self):
         '''
@@ -133,33 +117,68 @@ class Deduplicator():
         finding candidate pairs, performing self-alignment, deduplicating pairs, and
         writing the deduplicated contigs to a file.
         '''
-                
         # Collect kmers stats
         self.analyze_kmers()
-
-        # # Perform whole genome self-alignment
+        
+        # Perform self alignment
         self_alignment = self.self_alignment()
 
         # Find candidate pairs of contigs to deduplicate
         candidate_pairs = self.find_candidate_pairs_hash(self.containment_threshold)
-
         logger.debug(f"candidate_pairs: {candidate_pairs}")
 
+        # Process alignments and deduplicate
+        best_alignments_df = self.process_candidate_pairs(candidate_pairs, self_alignment)
+        best_alignments_df.to_csv("best_alignments.paf", sep="\t", index=False, header=False)
+
+        # Write output
+        self.write_deduplicated_contigs()
+
+    def process_candidate_pairs(self, candidate_pairs, self_alignment):
+        '''
+        Process candidate pairs to find and record duplications.
+        
+        Args:
+            candidate_pairs (list): List of contig pairs to analyze
+            self_alignment (dict): Dictionary containing alignment information
+            
+        Returns:
+            DataFrame: Contains information about the best alignments found
+        '''
         jobs = []
         candidate_alignments_df = pd.DataFrame()
+        
+        # Prepare alignment data for each pair
         for pair in candidate_pairs:
             alignment_df = self.get_alignment_df(self_alignment, pair[0].name, pair[1].name)
             candidate_alignments_df = pd.concat([candidate_alignments_df, alignment_df])
-            jobs.append((pair[0], pair[1], alignment_df, self.alignment_max_gap, self.alignment_match_weight, self.aln_min_coverage))
+            jobs.append((pair[0], pair[1], alignment_df, self.alignment_max_gap, 
+                        self.alignment_match_weight, self.aln_min_coverage))
 
-        candidate_alignments_df.to_csv("candidate_alignments.paf", sep="\t", index=False, header=False)
+        candidate_alignments_df.to_csv("candidate_alignments.paf", sep="\t", 
+                                     index=False, header=False)
 
-        with Pool(processes=self.threads) as pool:
-            # Results is a list of tuples, where each tuple is (index_of_contig_to_mark_duplication, (start, end))
-            results = pool.starmap(self.dedup_pair, [job for job in jobs])
+        # Process pairs and collect results
+        results = []
+        for job in jobs:
+            result = self.dedup_pair(*job)
+            results.append(result)
 
+        return self.collect_deduplication_results(candidate_pairs, results)
+
+    def collect_deduplication_results(self, candidate_pairs, results):
+        '''
+        Collect and process the results from deduplication of pairs.
+        
+        Args:
+            candidate_pairs (list): List of contig pairs that were analyzed
+            results (list): Results from dedup_pair for each pair
+            
+        Returns:
+            DataFrame: Contains information about the best alignments found
+        '''
         best_alignments_df = pd.DataFrame()
-        # Process the results
+        
         for pair, result in zip(candidate_pairs, results):
             logging.debug(f"pair: {pair} result: {result}")
             if result:
@@ -167,26 +186,78 @@ class Deduplicator():
                 pair[idx].duplicated.append(interval)
                 logger.debug(pair[idx].duplicated)
                 logger.debug(best_aln)
-                best_aln_q = pd.DataFrame([[pair[0].name, len(pair[0].sequence), best_aln["qstart"], best_aln["qend"], best_aln["direction"], pair[1].name, len(pair[1].sequence), best_aln["tstart"], best_aln["tend"], "0", "0", "0"]], columns=["qname", "qlen", "qstart", "qend", "dir", "tname", "tlen", "tstart", "tend", "a", "b", "c"])
-                best_aln_t = pd.DataFrame([[pair[1].name, len(pair[1].sequence), best_aln["tstart"], best_aln["tend"], best_aln["direction"], pair[0].name, len(pair[0].sequence), best_aln["qstart"], best_aln["qend"], "0", "0", "0"]], columns=["qname", "qlen", "qstart", "qend", "dir", "tname", "tlen", "tstart", "tend", "a", "b", "c"])
-                best_alignments_df =pd.concat([best_alignments_df, best_aln_q, best_aln_t])
+                
+                # Create alignment records for both query and target
+                best_aln_q = pd.DataFrame([[
+                    pair[0].name, len(pair[0].sequence), best_aln["qstart"], 
+                    best_aln["qend"], best_aln["direction"], pair[1].name, 
+                    len(pair[1].sequence), best_aln["tstart"], best_aln["tend"], 
+                    "0", "0", "0"
+                ]], columns=["qname", "qlen", "qstart", "qend", "dir", "tname", 
+                            "tlen", "tstart", "tend", "a", "b", "c"])
+                
+                best_aln_t = pd.DataFrame([[
+                    pair[1].name, len(pair[1].sequence), best_aln["tstart"], 
+                    best_aln["tend"], best_aln["direction"], pair[0].name, 
+                    len(pair[0].sequence), best_aln["qstart"], best_aln["qend"], 
+                    "0", "0", "0"
+                ]], columns=["qname", "qlen", "qstart", "qend", "dir", "tname", 
+                            "tlen", "tstart", "tend", "a", "b", "c"])
+                            
+                best_alignments_df = pd.concat([best_alignments_df, best_aln_q, best_aln_t])
 
-        best_alignments_df.to_csv("best_alignments.paf", sep="\t", index=False, header=False)
+        return best_alignments_df
 
-        with open(f"deduplicated_contigs.fasta", "w") as seq_file:
-            with open(f"deduplicated_stats.csv", "w") as stats_file:
-                for c in self.contigs:
-                    seq, stats = c.get_non_duplicated_sequence()
-                    seq_file.write(seq)
-                    # print(",".join(stats))
-                    e=0.000001 # prevent divide by zero
-                    stats.append(stats[0] / (stats[1] + e))
-                    stats.append(stats[2] / (stats[3] + e))
-                    stats.append(stats[0] / (stats[2] + e))
-                    stats_file.write(f"{c.name},{','.join([str(s) for s in stats])}\n")
+    def write_deduplicated_contigs(self, output_file="deduplicated_contigs.fasta"):
+        '''
+        Write the deduplicated contigs to a FASTA file.
+        
+        Args:
+            output_file (str): Path to output FASTA file
+        '''
+        with open(output_file, "w") as seq_file:
+            for c in self.contigs:
+                seq = c.get_non_duplicated_sequence()
+                seq_file.write(seq)
+
+    def log_dedup_statistics(contig1, contig2, best_alignment):
+        """
+        Log the deduplication statistics for a pair of contigs.
+
+        Args:
+            contig1 (Contig): The first contig.
+            contig2 (Contig): The second contig.
+            best_alignment (dict): The best alignment between the two contigs.
+
+        Returns:
+            None
+        """
+        # Find the contig that is more duplicated 
+        contig1_percent_duplicated = (best_alignment["qend"] - best_alignment["qstart"]) / len(contig1.sequence)
+        contig2_percent_duplicated = (best_alignment["tend"] - best_alignment["tstart"]) / len(contig2.sequence)
+        
+        logger.debug("--------------------------------------------------------------------------------")
+        logger.debug(f"Deduplicating {contig1} and {contig2}")
+        logger.debug(f"{contig1} is {100*contig1_percent_duplicated:.2f}% duplicated by alignment")
+        logger.debug(f"{contig2} is {100*contig2_percent_duplicated:.2f}% duplicated by alignment")
+        
+        c1_homo_dup_aln = contig1.homo_dup_depth[best_alignment["qstart"]:best_alignment["qend"]]
+        c1_homo_dup_tot = contig1.homo_dup_depth[:]
+        c1_homo_non_dup_aln = contig1.homo_non_dup_depth[best_alignment["qstart"]:best_alignment["qend"]]
+        c1_homo_non_dup_tot = contig1.homo_non_dup_depth[:]
+        logger.debug(f"{contig1} alignment has {sum(c1_homo_dup_aln)}/{sum(c1_homo_dup_tot)} duplicated and {sum(c1_homo_non_dup_aln)}/{sum(c1_homo_non_dup_tot)} non duplicated kmers")
+        
+        c2_homo_dup_aln = contig2.homo_dup_depth[best_alignment["tstart"]:best_alignment["tend"]]
+        c2_homo_dup_tot = contig2.homo_dup_depth[:]
+        c2_homo_non_dup_aln = contig2.homo_non_dup_depth[best_alignment["tstart"]:best_alignment["tend"]]
+        c2_homo_non_dup_tot = contig2.homo_non_dup_depth[:]
+
+        logger.debug(f"{contig2} alignment has {sum(c2_homo_dup_aln)}/{sum(c2_homo_dup_tot)} duplicated and {sum(c2_homo_non_dup_aln)}/{sum(c2_homo_non_dup_tot)} non duplicated kmers")
+        
+        logger.debug(best_alignment)
 
     @staticmethod
-    def dedup_pair(contig1, contig2, alignment_df, alignment_max_gap=25000, alignment_match_weight=0.2, aln_coverage=0):
+    def dedup_pair(contig1, contig2, alignment_df, alignment_max_gap, alignment_match_weight, aln_coverage):
         """
         Analyse the alignment and duplication between two contigs, 
         if they can be deduplicated, mark appropriate regions for deduplication
@@ -209,102 +280,24 @@ class Deduplicator():
 
         # If there is no alignment, quit
         if best_alignment is None:
-            logger.debug("no alignment found -- have not handled this")
+            logger.debug("no valid alignment found. Skipping deduplication")
             return
 
+        # Log the deduplication statistics
+        Deduplicator.log_dedup_statistics(contig1, contig2, best_alignment)
+        
         # Find the contig that is more duplicated 
         contig1_percent_duplicated = (best_alignment["qend"] - best_alignment["qstart"]) / len(contig1.sequence)
         contig2_percent_duplicated = (best_alignment["tend"] - best_alignment["tstart"]) / len(contig2.sequence)
         
-        logger.debug("--------------------------------------------------------------------------------")
-        logger.debug(f"Deduplicating {contig1} and {contig2}")
-        logger.debug(f"{contig1} is {100*contig1_percent_duplicated:.2f}% duplicated by alignment")
-        logger.debug(f"{contig2} is {100*contig2_percent_duplicated:.2f}% duplicated by alignment")
-        
-        
-        c1_homo_dup_aln = contig1.homo_dup_depth[best_alignment["qstart"]:best_alignment["qend"]]
-        c1_homo_dup_tot = contig1.homo_dup_depth[:]
-        c1_homo_non_dup_aln = contig1.homo_non_dup_depth[best_alignment["qstart"]:best_alignment["qend"]]
-        c1_homo_non_dup_tot = contig1.homo_non_dup_depth[:]
-        logger.debug(f"{contig1} alignment has {sum(c1_homo_dup_aln)}/{sum(c1_homo_dup_tot)} duplicated and {sum(c1_homo_non_dup_aln)}/{sum(c1_homo_non_dup_tot)} non duplicated kmers")
-        
-        c2_homo_dup_aln = contig2.homo_dup_depth[best_alignment["tstart"]:best_alignment["tend"]]
-        c2_homo_dup_tot = contig2.homo_dup_depth[:]
-        c2_homo_non_dup_aln = contig2.homo_non_dup_depth[best_alignment["tstart"]:best_alignment["tend"]]
-        c2_homo_non_dup_tot = contig2.homo_non_dup_depth[:]
-
-        logger.debug(f"{contig2} alignment has {sum(c2_homo_dup_aln)}/{sum(c2_homo_dup_tot)} duplicated and {sum(c2_homo_non_dup_aln)}/{sum(c2_homo_non_dup_tot)} non duplicated kmers")
-        
-        logger.debug(best_alignment)
-        
-        # Get the contig to deduplicate, along with the start and end of the duplicated region
-        contig_to_deduplicate = None
-        deduplicate_idx = -1
         if contig1_percent_duplicated > contig2_percent_duplicated:
-            contig_to_deduplicate = contig1
-            contig_percent_duplicated = contig1_percent_duplicated
-            start = best_alignment['qstart']
-            end = best_alignment['qend']
-            deduplicate_idx = 0
+            dedup_success = contig1.set_duplication_intervals(best_alignment["qstart"], best_alignment["qend"])
+            if not dedup_success: # Deduplication on contig 1 failed, try contig 2
+                contig2.set_duplication_intervals(best_alignment["tstart"], best_alignment["tend"])
         else:
-            contig_to_deduplicate = contig2
-            contig_percent_duplicated = contig2_percent_duplicated
-            start = best_alignment['tstart']
-            end = best_alignment['tend']
-            deduplicate_idx = 1
-
-        # HACK
-        def set_deduplication_interval(contig_to_deduplicate, contig_percent_duplicated, deduplicate_idx, best_alignment, start, end):
-            # If over threshold, deduplicate the whole contig
-            # full_duplication_threshold = self.full_duplication_threshold # TODO: fix
-            # end_buffer = self.end_buffer
-
-            full_duplication_threshold = 0.9 # TODO: fix
-            end_buffer = 25000
-            if contig_percent_duplicated > full_duplication_threshold:
-                # contig_to_deduplicate.duplicated = [(0, len(contig_to_deduplicate.sequence))]
-                logger.debug(f"Deduplicating whole contig {contig_to_deduplicate}")
-
-                return (deduplicate_idx, (0, len(contig_to_deduplicate.sequence)), best_alignment)
-            
-            # If not over threshold, but close to an edge, deduplicate to the edge
-            else:
-                if start < end_buffer:
-                    logger.debug(f"Deduplicating start of contig {contig_to_deduplicate}")
-                    # contig_to_deduplicate.duplicated.append((0, end))
-                    return (deduplicate_idx, (0, end), best_alignment)
-                    # print(contig_to_deduplicate.duplicated)
-                elif end > len(contig_to_deduplicate.sequence) - end_buffer:
-                    logger.debug(f"Deduplicating end of contig {contig_to_deduplicate}")
-                    return (deduplicate_idx, (start, len(contig_to_deduplicate.sequence)), best_alignment)
-                    # contig_to_deduplicate.duplicated.append((start, len(contig_to_deduplicate.sequence)))
-                    # print(contig_to_deduplicate.duplicated)
-
-                else:
-                    logger.info(f"What to deduplicate {contig_to_deduplicate}, but can't figure out how")
-            
-            # logger.debug("***Failed to deduplicate***")
-            return None
-
-        result = set_deduplication_interval(contig_to_deduplicate, contig_percent_duplicated, deduplicate_idx, best_alignment, start, end)
-        
-        if not result:
-
-            if contig1_percent_duplicated > contig2_percent_duplicated:
-                contig_to_deduplicate = contig2
-                contig_percent_duplicated = contig2_percent_duplicated
-                start = best_alignment['tstart']
-                end = best_alignment['tend']
-                deduplicate_idx = 1
-            else:
-                contig_to_deduplicate = contig1
-                contig_percent_duplicated = contig1_percent_duplicated
-                start = best_alignment['qstart']
-                end = best_alignment['qend']
-                deduplicate_idx = 0
-
-            result = set_deduplication_interval(contig_to_deduplicate, contig_percent_duplicated, deduplicate_idx, best_alignment, start, end)
-        return result
+            dedup_success = contig2.set_duplication_intervals(best_alignment["tstart"], best_alignment["tend"])
+            if not dedup_success: # Deduplication on contig 2 failed, try contig 1
+                contig1.set_duplication_intervals(best_alignment["qstart"], best_alignment["qend"])
 
     @staticmethod
     def get_hash(contig):
@@ -353,8 +346,7 @@ class Deduplicator():
                 try:
                     results.remove(contig)  # Remove the contig itself from the result
                 except:
-                    # print(f"{contig} not in it's own hash")
-                    pass
+                    logging.debug(f"{contig} not found in it's own hash -- this may happen very rarely")
 
                 if results:
                     for contig_2 in results:
@@ -364,10 +356,9 @@ class Deduplicator():
                         logging.debug(f"Jaccard similarity between {contig} and {contig_2}: {minhash.jaccard(hashes[contig_2])}")
                         logging.debug(f"c1_containment: {c1_containment}")
                         logging.debug(f"c2_containment: {c2_containment}")
-                        # Always make the tuples in the same order
+
                         if c1_containment > containment_threshold or c2_containment > containment_threshold:
                             logger.debug(f"Added contig pair {contig} - {contig_2} to candidates")
-                            
                             # Add in deterministic order to allow deduplication later - both contigs may find the other
                             if contig < contig_2:
                                 candidate_pairs.append((contig, contig_2))
@@ -439,7 +430,7 @@ class Deduplicator():
             p = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
             retval = p.wait()
         else:
-            logger.info(f"\tSkipping alignment because result already exist")
+            logger.info(f"Skipping alignment because result already exist")
         
         logger.info(f"parsing alignment file: {alignment_file}")
 
@@ -504,11 +495,22 @@ class Deduplicator():
         contigs = []
 
         for fasta in SeqIO.parse(open(assembly), 'fasta'):
-            contig = Contig(fasta.id, fasta.seq)
+            contig = Contig(fasta.id, fasta.seq, self.params)
             contigs.append(contig)
         
         return contigs
         
+    def __enter__(self):
+        return self
+        
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.cleanup()
+        
+    def cleanup(self):
+        """Clean up temporary files and resources."""
+        if not self.params.save_tmp and os.path.exists(self.tmp_dir):
+            shutil.rmtree(self.tmp_dir)
+
 def parse_args():
     """
     Parse command line arguments.
@@ -595,6 +597,12 @@ def parse_args():
                         type=int,
                         help='If contig is marked duplicated within end_buffer base pairs of edge of contig, extend duplication to edge (default: 25000)',
                         default=25000,
+                        required=False)
+    
+    advanced_options.add_argument('--min_sequence_length',
+                        type=int,
+                        help='Minimum sequence length to output after deduplication (default: 10000)',
+                        default=10000,
                         required=False)
 
     advanced_options.add_argument('--duplicate_kmer_lower_count',

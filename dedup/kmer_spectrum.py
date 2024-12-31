@@ -184,7 +184,7 @@ def fit_kmer_spectrum(data, min_kmer_depth, max_kmer_depth):
     if not result.success:
         logger.error(f"Optimization failed: {result.message}")
         logger.error(f"Consider providing homozygous_lower_bound and homozygous_upper_bound manually.")
-        sys.exit(1)
+        raise RuntimeError(f"Optimization failed: {result.message}")
 
     if result.fun > 2e-1:
         logger.warning(f"Optimizer may not have found a good model of kmer-spectrum -- suggest manually checking curve fit (kmer_spectrum_fit.png)")
