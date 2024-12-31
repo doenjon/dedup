@@ -117,7 +117,8 @@ class Contig():
             None
         """
         logger.info(f"reading bam: {bam} for kmers to {self.name}")
-        cmd = f"samtools view {bam} -@ {self.threads} '{self.name}'"  
+        cmd = f"samtools view {bam} '{self.name}'"  
+        # cmd = f"samtools view {bam} -@ {self.threads} '{self.name}'"  
         logger.info(cmd)
         
         proc = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE)
