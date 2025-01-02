@@ -50,10 +50,10 @@ process PURGEHAPLOTIGS {
     """
 }
 
-process FASTPURGE {
-    tag "fastpurge"
+process DEDUP {
+    tag "dedup"
     label 'large'
-    publishDir { params.results + "/" + "fastpurge" } , mode: "copy"
+    publishDir { params.results + "/" + "dedup" } , mode: "copy"
 
     input:
         path assembly
@@ -66,6 +66,6 @@ process FASTPURGE {
 
     script:
     """
-    python3 /home/groups/ellenyeh/jdoenier/dedup/dedup/dedup.py --reads ${r1} --assembly ${assembly}
+    dedup --reads ${r1} --assembly ${assembly}
     """
 }

@@ -15,25 +15,6 @@ workflow ASSEMBLE {
     polished_assembly
 }
 
-workflow ANALYZE_DEDUPLICATION {
-
-    take:
-        assembly
-        illumina_reads
-        pubDir
-        
-   
-    main:
-        quast_result = QUAST(assembly, pubDir)
-        busco_result = BUSCO(assembly, pubDir)
-        kat_result = KAT(assembly, illumina_reads, pubDir)
-
-    emit:
-        quast_result
-        busco_result
-        kat_result
-}
-
 
 process FLYE {
   /* 
