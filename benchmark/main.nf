@@ -21,26 +21,27 @@ workflow {
     println()
 
     // Preprocess reads
-    illumina_reads = FASTP(Channel.fromList(params.illumina_reads))
-    long_reads = NANOFILT(params.long_reads)
+    illumina_reads = params.illumina_reads ? FASTP(Channel.fromList(params.illumina_reads)) : null
+    ont_reads = params.long_reads ? NANOFILT(params.long_reads) : null
+    pacbio_reads = params.pacbio_reads ? Channel.value(params.pacbio_reads) : null
 
     // Check if a genome is provided
     if (params.genome) {
         assembly = Channel.value(params.genome)
     } else {
         // Perform Genome Assembly
-        assembly = ASSEMBLE(long_reads.reads, illumina_reads.reads).polished_assembly
+        assembly = ASSEMBLE(ont_reads?.reads, illumina_reads?.reads).polished_assembly
     }
 
     // Run deduplication algorithms
-    purgedups_result = PURGEDUPS(assembly, long_reads.reads)
-    purgehaplotigs_result = PURGEHAPLOTIGS(assembly, long_reads.reads)
-    dedup_result = DEDUP(assembly, illumina_reads.reads)
+    purgedups_result = PURGEDUPS(assembly, ont_reads?.reads, pacbio_reads)
+    purgehaplotigs_result = PURGEHAPLOTIGS(assembly, ont_reads?.reads, pacbio_reads)
+    dedup_result = DEDUP(assembly, illumina_reads?.reads ?: pacbio_reads)
 
     // Assay performance with BUSCO and KAT
-    ANALYZE_DEDUPLICATION_PURGEDUPS(purgedups_result.assembly, illumina_reads, "purgedups")
-    ANALYZE_DEDUPLICATION_PURGEHAPLOTIGS(purgehaplotigs_result.assembly, illumina_reads, "purgehaplotigs")
-    ANALYZE_DEDUPLICATION_DEDUP(dedup_result.assembly, illumina_reads, "dedup")
-    ANALYZE_DEDUPLICATION_ORIGINAL(assembly, illumina_reads, "original")
+    ANALYZE_DEDUPLICATION_PURGEDUPS(purgedups_result.assembly, illumina_reads ?: pacbio_reads, "purgedups")
+    ANALYZE_DEDUPLICATION_PURGEHAPLOTIGS(purgehaplotigs_result.assembly, illumina_reads ?: pacbio_reads, "purgehaplotigs")
+    ANALYZE_DEDUPLICATION_DEDUP(dedup_result.assembly, illumina_reads ?: pacbio_reads, "dedup")
+    ANALYZE_DEDUPLICATION_ORIGINAL(assembly, illumina_reads ?: pacbio_reads, "original")
 }
 

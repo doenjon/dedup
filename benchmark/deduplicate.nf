@@ -10,6 +10,7 @@ process PURGEDUPS {
     input:
         path assembly
         path ont_reads
+        path pacbio_reads
 
     output:
         path "purged.fa", emit: assembly
@@ -17,7 +18,11 @@ process PURGEDUPS {
 
     script:
     """
-    minimap2 -t $task.cpus -x map-ont ${assembly} ${ont_reads} | gzip -c - > mapped_reads.paf.gz
+    if [ -n "${pacbio_reads}" ]; then
+        minimap2 -t $task.cpus -x map-pb ${assembly} ${pacbio_reads} | gzip -c - > mapped_reads.paf.gz
+    else
+        minimap2 -t $task.cpus -x map-ont ${assembly} ${ont_reads} | gzip -c - > mapped_reads.paf.gz
+    fi
     pbcstat mapped_reads.paf.gz
     calcuts PB.stat > cutoffs 2>calcults.log
     
@@ -36,6 +41,7 @@ process PURGEHAPLOTIGS {
     input:
         path assembly
         path ont_reads
+        path pacbio_reads
 
     output:
         path "*.curated.fasta", emit: assembly
@@ -43,7 +49,11 @@ process PURGEHAPLOTIGS {
 
     script:
     """
-    minimap2 -t $task.cpus -ax map-ont ${assembly} ${ont_reads} | samtools view -b | samtools sort -m 1G -@ $task.cpus -o mapped_reads.sorted.bam
+    if [ -n "${pacbio_reads}" ]; then
+        minimap2 -t $task.cpus -ax map-pb ${assembly} ${pacbio_reads} | samtools view -b | samtools sort -m 1G -@ $task.cpus -o mapped_reads.sorted.bam
+    else
+        minimap2 -t $task.cpus -ax map-ont ${assembly} ${ont_reads} | samtools view -b | samtools sort -m 1G -@ $task.cpus -o mapped_reads.sorted.bam
+    fi
     purge_haplotigs hist -b mapped_reads.sorted.bam -g ${assembly} -t $task.cpus
     purge_haplotigs cov -i mapped_reads.sorted.bam.gencov -l $params.l -m $params.m -h $params.h -o coverage_stats.csv
     purge_haplotigs purge -g ${assembly} -c coverage_stats.csv -o ${assembly}.curated -t $task.cpus

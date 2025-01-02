@@ -67,16 +67,24 @@ process KAT {
 
     input:
         path assembly
-        tuple path(r1), path(r2)
+        tuple path(r1), path(r2) optional true
+        path pacbio_reads optional true
         val(pubDir)
 
     output:
         path '*'
 
     script:
-        """
+    """
+    if [ -n "${r1}" ] && [ -n "${r2}" ]; then
         kat comp -t $task.cpus -o kat_output '${r1} ${r2}' ${assembly}
-        """
+    elif [ -n "${pacbio_reads}" ]; then
+        kat comp -t $task.cpus -o kat_output ${pacbio_reads} ${assembly}
+    else
+        echo "Error: No reads provided for KAT" >&2
+        exit 1
+    fi
+    """
 }
 
 
