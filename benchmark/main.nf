@@ -26,18 +26,18 @@ workflow {
         | FASTP
         | collect()
         | map { reads -> [reads.collect{it[0]}, reads.collect{it[1]}] }  // Group R1s and R2s
-        | CONCAT_ILLUMINA : null
+        | CONCAT_ILLUMINA
 
     ont_reads = params.ont_reads ? Channel
         .fromList(params.ont_reads)
         .collect()
         | CONCAT_NANOPORE
-        | NANOFILT : null
+        | NANOFILT
 
     pacbio_reads = params.pacbio_reads ? Channel
         .fromList(params.pacbio_reads)
         .collect()
-        | CONCAT_PACBIO : null
+        | CONCAT_PACBIO
 
     // Check if a genome is provided
     if (params.genome) {
