@@ -20,10 +20,24 @@ workflow {
     printParams(params)
     println()
 
-    // Preprocess reads
-    illumina_reads = params.illumina_reads ? FASTP(Channel.fromList(params.illumina_reads)) : null
-    ont_reads = params.long_reads ? NANOFILT(params.long_reads) : null
-    pacbio_reads = params.pacbio_reads ? Channel.value(params.pacbio_reads) : null
+    // Prepare read channels
+    illumina_reads = params.illumina_reads ? Channel
+        .fromFilePairs(params.illumina_reads)
+        | FASTP
+        | collect()
+        | map { reads -> [reads.collect{it[0]}, reads.collect{it[1]}] }  // Group R1s and R2s
+        | CONCAT_ILLUMINA : null
+
+    ont_reads = params.ont_reads ? Channel
+        .fromList(params.ont_reads)
+        .collect()
+        | CONCAT_NANOPORE
+        | NANOFILT : null
+
+    pacbio_reads = params.pacbio_reads ? Channel
+        .fromList(params.pacbio_reads)
+        .collect()
+        | CONCAT_PACBIO : null
 
     // Check if a genome is provided
     if (params.genome) {
