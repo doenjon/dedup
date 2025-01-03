@@ -6,14 +6,20 @@ workflow ANALYZE_DEDUPLICATION {
 
     take:
         assembly
-        illumina_reads
+        reads
         pubDir
         
    
     main:
         quast_result = QUAST(assembly, pubDir)
         busco_result = BUSCO(assembly, pubDir)
-        kat_result = KAT(assembly, illumina_reads, pubDir)
+        
+        // Handle illumina vs pacbio reads for KAT
+        if (reads instanceof Path) {
+            kat_result = KAT(assembly, Channel.empty(), reads, pubDir)
+        } else {
+            kat_result = KAT(assembly, reads, Channel.empty(), pubDir)
+        }
 
     emit:
         quast_result
@@ -67,8 +73,8 @@ process KAT {
 
     input:
         path assembly
-        tuple path(r1), path(r2) optional true
-        path pacbio_reads optional true
+        tuple path(r1), path(r2)
+        path pacbio_reads
         val(pubDir)
 
     output:
